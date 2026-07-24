@@ -1,0 +1,22 @@
+.env
+.venv/
+venv/
+__pycache__/
+*.pyc
+results/raw/
+*.eso
+*.err
+*.audit
+*.bnd
+*.eio
+*.mtd
+*.mtr
+*.rdd
+*.edd
+*.shd
+eplusout*
+
+# Local-only project docs -- never pushed (see CLAUDE.md's own note on this).
+CLAUDE.md
+PROJECT_PLAN.md
+docs/HACKATHON_SPEC.md

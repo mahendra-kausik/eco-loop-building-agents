@@ -1,0 +1,16 @@
+# Core loop
+openai>=1.40          # OpenAI-compatible client for Groq/Together/Fireworks
+python-dotenv>=1.0
+pydantic>=2.7         # strict JSON schema validation of LLM decisions
+tenacity>=8.3         # retries with backoff
+
+# MCP server (spec compliance + demo)
+mcp>=1.0              # FastMCP
+
+# Analysis / dashboard
+pandas>=2.2
+numpy>=1.26
+plotly>=5.22
+
+# NOTE: pyenergyplus is NOT pip-installed — it ships inside the EnergyPlus install dir.
+# Access it via: sys.path.append(<E+ install dir>); from pyenergyplus.api import EnergyPlusAPI
