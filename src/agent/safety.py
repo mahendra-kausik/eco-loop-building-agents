@@ -16,6 +16,7 @@ from src.agent.fallback import clamp_fan_available, clamp_setpoints, fallback_co
 from src.agent.llm_client import complete
 from src.agent.prompts import SYSTEM_PROMPT, build_user_prompt
 from src.tools.building_tools import (
+    MAX_ERROR_CHARS,
     get_building_state,
     get_forecast_context,
     get_recent_errors,
@@ -34,6 +35,24 @@ class SetpointDecision(BaseModel):
 # alternate with a fallback hour landing on a very different value). Exempted
 # across an occupied<->unoccupied transition, where a real step is the point.
 MAX_SETPOINT_STEP_C = 1.5
+
+# Occupied cooling above this measured out of band: across a 7-day run, PMV
+# breached +0.5 in 7 of 40 zone-hours spent above 25.5 C, versus 1 of 205 at
+# 25.5 C. clamp_setpoints' 28 C ceiling is the safe *equipment* range; this is
+# the tighter *comfort* bound the prompt already asks for, enforced rather than
+# suggested.
+COMFORT_MAX_COOLING_C = 25.5
+
+
+def _apply_comfort_guard(heating_c: float, cooling_c: float, occupied: bool) -> tuple[float, float, bool]:
+    """Caps occupied cooling at COMFORT_MAX_COOLING_C, re-clamping to keep the
+    heating<=cooling-1 invariant. Returns (heating_c, cooling_c, was_capped).
+    No-op unoccupied (30 C ceiling there is already comfort-irrelevant) or
+    already inside the band."""
+    if not occupied or cooling_c <= COMFORT_MAX_COOLING_C:
+        return heating_c, cooling_c, False
+    heating_c, cooling_c = clamp_setpoints(heating_c, COMFORT_MAX_COOLING_C, occupied)
+    return heating_c, cooling_c, True
 
 
 def _validate(raw_reply: str) -> SetpointDecision:
@@ -95,7 +114,7 @@ def make_llm_controller(log_path: Optional[str] = None, run_dir: Optional[str] =
             "provider": None, "latency_ms": None, "raw_reply": None, "retried": False,
             "requested_heating_c": None, "requested_cooling_c": None,
             "heating_c": None, "cooling_c": None, "fan_available": None,
-            "was_clamped": None, "was_rate_limited": False,
+            "was_clamped": None, "was_rate_limited": False, "was_comfort_capped": False,
             "fallback_used": False, "error": None,
         }
 
@@ -112,7 +131,12 @@ def make_llm_controller(log_path: Optional[str] = None, run_dir: Optional[str] =
             )
         except Exception as exc:  # noqa: BLE001 -- any failure (timeout, invalid-after-retry, etc.) falls back
             entry["fallback_used"] = True
-            entry["error"] = f"{type(exc).__name__}: {exc}"
+            # Truncated to MAX_ERROR_CHARS -- raw provider error bodies (a 429's
+            # message includes the account's org id) go straight to a logged
+            # file here, not just back into a prompt like get_recent_errors'
+            # callers; same constant, same reason to clip.
+            raw = f"{type(exc).__name__}: {exc}"
+            entry["error"] = raw if len(raw) <= MAX_ERROR_CHARS else raw[: MAX_ERROR_CHARS - 3] + "..."
             heating_c, cooling_c, fan_available = fallback_controller(row, day_of_year, hour, day_of_week)
 
         # Anti-thrash rate limit, skipped across an occupancy transition (a real
@@ -134,6 +158,11 @@ def make_llm_controller(log_path: Optional[str] = None, run_dir: Optional[str] =
             heating_c, cooling_c = clamp_setpoints(heating_c, cooling_c, occupied)
         entry["was_rate_limited"] = (heating_c, cooling_c) != pre_rate_limit
         last.update(heating=heating_c, cooling=cooling_c, occupied=occupied)
+
+        # Comfort guard: last stage, after clamp and rate-limit, so it's
+        # authoritative rather than something the rate limiter could drag back
+        # out of band on the way down from a high prior setpoint.
+        heating_c, cooling_c, entry["was_comfort_capped"] = _apply_comfort_guard(heating_c, cooling_c, occupied)
 
         entry["heating_c"], entry["cooling_c"], entry["fan_available"] = heating_c, cooling_c, fan_available
         with open(log_path, "a") as f:
@@ -185,6 +214,15 @@ def demo() -> None:
     # isn't -- see fallback.py's demo() for the full occupancy/temp matrix.
     assert clamp_fan_available(True, hour=2, day_of_week=3, max_zone_temp_c=20.0, cooling_setpoint_c=29.0) == 0.0
     assert clamp_fan_available(True, hour=2, day_of_week=3, max_zone_temp_c=None, cooling_setpoint_c=29.0) == 1.0
+
+    # Comfort guard: occupied cooling above the cap is capped; at/below it, and
+    # unoccupied hours (wider legal range), are untouched.
+    h, c, capped = _apply_comfort_guard(21.0, 28.0, occupied=True)
+    assert (h, c, capped) == (21.0, 25.5, True)
+    h, c, capped = _apply_comfort_guard(21.0, 25.0, occupied=True)
+    assert (h, c, capped) == (21.0, 25.0, False)
+    h, c, capped = _apply_comfort_guard(18.0, 29.5, occupied=False)
+    assert (h, c, capped) == (18.0, 29.5, False)
 
     print("safety.py: all assertions passed.")
 

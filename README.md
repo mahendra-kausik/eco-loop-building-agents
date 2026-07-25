@@ -15,11 +15,11 @@ self-reported total — see `docs/ARCHITECTURE.md`'s metering-correction note.
 
 | Metric | Baseline | LLM + supervisor | Rule-based floor (no LLM) |
 |---|---|---|---|
-| Total facility electricity (kWh) | 1100.0 | 1021.8 (+7.1%) | **1018.3** (+7.4%) |
-| HVAC-only electricity (kWh) | 413.6 | 335.4 (+18.9%) | **331.9** (+19.8%) |
-| Occupied hours with PMV in [-0.5, +0.5] | 80.7% | 90.5% (+9.8 pts) | **92.0%** (+11.3 pts) |
-| Reheat gas (kWh) | 32.9 | 2.8 | **0.0** |
-| CO2 (kg, grid-intensity weighted) | 663.8 | 616.3 | 610.3 |
+| Total facility electricity (kWh) | 1100.0 | 1032.2 (+6.2%) | **1018.3** (+7.4%) |
+| HVAC-only electricity (kWh) | 413.6 | 345.8 (+16.4%) | **331.9** (+19.8%) |
+| Occupied hours with PMV in [-0.5, +0.5] | 80.7% | **92.7%** (+12.0 pts) | 92.0% (+11.3 pts) |
+| Reheat gas (kWh) | 32.9 | 3.5 | **0.0** |
+| CO2 (kg, grid-intensity weighted) | 663.8 | 623.8 | **610.3** |
 | Simulated days without a crash | — | 14+ (2x standard horizon) | 14+ |
 
 Both configurations beat baseline on energy **and** comfort at the same time —
@@ -30,14 +30,16 @@ Two caveats we'd rather state than bury:
 - **~62% of facility electricity is lighting/plug load** that no setpoint or fan
   decision can touch. That's why HVAC-only % is the honest measure of what
   supervisory control actually moves, and why we report both numbers.
-- **The rule-based floor now beats the LLM on every measured axis.** A prompt
-  change narrowed the occupied-hours cooling guidance to a comfort-safe
-  24.5–25.5 °C band, which cut the comfort gap from 5.8 points to 1.5 (90.5%
-  vs 92.0%) but cost a small amount of energy in the process (0.3 pts total
-  kWh, 0.9 pts HVAC). Genuine LLM participation also rose sharply — fallback
-  usage dropped from 20% to 3.6% of decisions. Since the supervisor falls back
-  to exactly the deterministic floor on any LLM failure, the system's worst
-  case is still its strongest configuration
+- **The LLM beats its own deterministic fallback on comfort, not on energy.**
+  A supervisor-enforced comfort guard caps occupied cooling at 25.5 °C — a
+  bound derived from measurement, not guessed: PMV breached +0.5 in 7 of 40
+  zone-hours the LLM spent above that setpoint, versus 1 of 205 at or below
+  it. Capping it pushes LLM comfort past the floor's own 92.0% for the first
+  time (92.7%), at the honest cost of 3.5 points of HVAC savings (18.9% before
+  the guard, 16.4% after) — holding a tighter comfort band means real extra
+  cooling energy on the hours it binds. Since the supervisor falls back to
+  exactly the deterministic floor on any LLM failure, the system's worst case
+  never loses more than that trade
   ([`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)).
 
 Dashboard: `results/dashboard.html` (Phase 5) · Demo video: _link TBD_

@@ -45,7 +45,7 @@ Hard limits (a supervisor clamps these outside your control, so give a value ins
 them or it will be overridden -- also caps hour-to-hour movement to 1.5 C except \
 across an occupied<->unoccupied transition, so commit to a real value, not a small \
 nudge you'll never actually reach):
-- Occupied: heating in [18, 23] C, cooling in [24, 28] C.
+- Occupied: heating in [18, 23] C, cooling in [24, 25.5] C.
 - Unoccupied: heating in [15, 23] C, cooling in [24, 30] C.
 - Always: heating <= cooling - 1 C.
 
