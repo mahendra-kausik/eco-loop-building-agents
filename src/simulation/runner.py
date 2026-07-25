@@ -1,15 +1,16 @@
-"""Phase 1: E+ -> Python state streaming.
+"""Phase 1+2: E+ <-> Python closed loop.
 
 EnergyPlusRunner owns one simulation: it resolves variable/meter/actuator handles
-once (after warmup, guarding -1 per CLAUDE.md), then streams one row per simulated
-hour into an in-memory buffer + CSV.
+once (after warmup, guarding -1 per CLAUDE.md), streams one row per simulated hour
+into an in-memory buffer + CSV, and -- if given a `controller` -- writes new
+setpoints back in once per simulated hour.
 
-Callback choice matters and differs from a first-pass reading of CLAUDE.md's "begin
-system timestep before predictor" line: that callback is for the Phase 2 *actuation*
-point (setpoints must be pushed before the predictor runs, so they affect that
-timestep's HVAC calc). For *reading* variables/meters -- Phase 1's job -- the value
-for a timestep isn't finalized until HVAC has actually run, so this runner reads at
-`callback_end_system_timestep_after_hvac_reporting` instead.
+Two callbacks, deliberately different, per CLAUDE.md's "begin system timestep
+before predictor" line: that callback is for *actuation* (setpoints must be
+pushed before the predictor runs, so they affect that timestep's HVAC calc). For
+*reading* variables/meters, the value for a timestep isn't finalized until HVAC
+has actually run, so reads happen at `callback_end_system_timestep_after_hvac_reporting`
+and writes happen at `callback_begin_system_timestep_before_predictor`.
 
 Meter values are also not cumulative: `get_meter_value` documents itself as
 "the instantaneous value ... not the cumulative value" -- i.e. the energy (J) added
@@ -20,7 +21,7 @@ with /3.6e6.
 """
 import csv
 import os
-from typing import Optional
+from typing import Callable, Optional
 
 from src.simulation.eplus_path import EnergyPlusAPI
 
@@ -43,14 +44,31 @@ GAS_METER = "NaturalGas:Facility"
 HEATING_SETPOINT_SCHEDULE = "Htg-SetP-Sch"
 COOLING_SETPOINT_SCHEDULE = "Clg-SetP-Sch"
 
+# Shared by all 5 zones (see People/OCCUPY-1 objects in baseline.idf) -- reading
+# it directly means the controller/Phase 4 comfort metric never has to reimplement
+# weekday/weekend/holiday calendar logic that already lives in the schedule.
+OCCUPANCY_SCHEDULE = "OCCUPY-1"
+
 J_PER_KWH = 3.6e6
+
+# Controller signature: takes the last completed hourly row (or None before the
+# first hour exists) and returns (heating_setpoint_c, cooling_setpoint_c).
+Controller = Callable[[Optional[dict]], tuple[float, float]]
 
 
 class EnergyPlusRunner:
-    def __init__(self, idf_path: str, epw_path: str, output_dir: str):
+    def __init__(
+        self,
+        idf_path: str,
+        epw_path: str,
+        output_dir: str,
+        controller: Optional[Controller] = None,
+    ):
+        """controller=None reproduces Phase 1 exactly: no actuation, read-only run."""
         self.idf_path = idf_path
         self.epw_path = epw_path
         self.output_dir = output_dir
+        self.controller = controller
         os.makedirs(output_dir, exist_ok=True)
 
         self.api = EnergyPlusAPI()
@@ -64,7 +82,10 @@ class EnergyPlusRunner:
         self._hour_gas_j = 0.0
         self._cumulative_electricity_kwh = 0.0
         self._cumulative_gas_kwh = 0.0
+        self._last_control_hour: Optional[tuple[int, int]] = None
         self.rows: list[dict] = []
+        self.injections = 0
+        self.controller_errors: list[tuple[int, int, str]] = []
 
     def _request_variables(self) -> None:
         for var_name, key in self._variable_specs():
@@ -85,6 +106,7 @@ class EnergyPlusRunner:
         specs += [
             ("Schedule Value", HEATING_SETPOINT_SCHEDULE),
             ("Schedule Value", COOLING_SETPOINT_SCHEDULE),
+            ("Schedule Value", OCCUPANCY_SCHEDULE),
         ]
         return specs
 
@@ -156,6 +178,9 @@ class EnergyPlusRunner:
             "cooling_setpoint_c": exchange.get_variable_value(
                 state, self._handles[("var", "Schedule Value", COOLING_SETPOINT_SCHEDULE)]
             ),
+            "occupancy_frac": exchange.get_variable_value(
+                state, self._handles[("var", "Schedule Value", OCCUPANCY_SCHEDULE)]
+            ),
         }
         for zone in ZONES:
             row[f"{zone}_temp_c"] = exchange.get_variable_value(
@@ -180,9 +205,40 @@ class EnergyPlusRunner:
             f"kWh_this_hr={hour_kwh:6.2f}  cum_kWh={self._cumulative_electricity_kwh:8.2f}"
         )
 
+    def _on_begin_timestep(self, state) -> None:
+        """Runs before the predictor, once per system timestep. Fires the
+        controller (if any) once per simulated hour and actuates its result.
+        Per CLAUDE.md: runtime errors here are caught and answered with the
+        last-known-good setpoints -- the simulation must never die because of
+        the agent."""
+        if self.controller is None:
+            return
+        exchange = self.exchange
+        if not exchange.api_data_fully_ready(state) or exchange.warmup_flag(state):
+            return
+        if not self._handles_resolved:
+            self._resolve_handles()
+
+        hour_key = (exchange.day_of_year(state), exchange.hour(state))
+        if hour_key == self._last_control_hour:
+            return  # already actuated this simulated hour
+        self._last_control_hour = hour_key
+
+        try:
+            last_row = self.rows[-1] if self.rows else None
+            heating_c, cooling_c = self.controller(last_row)
+        except Exception as exc:  # noqa: BLE001 -- deliberately broad, see docstring
+            self.controller_errors.append((hour_key[0], hour_key[1], str(exc)))
+            return  # leave whatever setpoints are already applied in place
+
+        exchange.set_actuator_value(state, self._handles[("actuator", HEATING_SETPOINT_SCHEDULE)], heating_c)
+        exchange.set_actuator_value(state, self._handles[("actuator", COOLING_SETPOINT_SCHEDULE)], cooling_c)
+        self.injections += 1
+
     def run(self) -> int:
         self._request_variables()
         self.runtime.callback_end_system_timestep_after_hvac_reporting(self.state, self._on_timestep)
+        self.runtime.callback_begin_system_timestep_before_predictor(self.state, self._on_begin_timestep)
         exit_code = self.runtime.run_energyplus(
             self.state,
             ["-w", self.epw_path, "-d", self.output_dir, "-r", self.idf_path],

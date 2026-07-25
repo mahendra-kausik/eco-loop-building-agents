@@ -94,15 +94,22 @@ EXTRA_OUTPUTS = """
 """
 
 
-def build_baseline_idf() -> str:
+def build_baseline_idf(days: int = 7, out_path: str | None = None) -> str:
+    """days=7 / out_path=None reproduces models/baseline.idf exactly (the
+    deliverable). scripts/smoke_test.py passes a short `days` + a scratch
+    `out_path` so its fast pre-commit run never touches the deliverable file."""
     with open(SOURCE_IDF, "r", encoding="latin-1") as f:
         text = f.read()
+
+    end_day = 15 + days - 1
+    if not 15 <= end_day <= 31:
+        raise ValueError(f"days={days} pushes the run period past July (end day {end_day})")
 
     text, n_runperiod = RUN_PERIOD_PATTERN.subn(
         r"\g<1>    7,                       !- Begin Month\n"
         r"    15,                      !- Begin Day of Month\n"
-        r"\g<2>    7,                       !- End Month\n"
-        r"    21,                      !- End Day of Month\n",
+        rf"\g<2>    7,                       !- End Month\n"
+        rf"    {end_day},                      !- End Day of Month\n",
         text,
     )
     if n_runperiod != 1:
@@ -123,11 +130,12 @@ def build_baseline_idf() -> str:
 
     text = text.rstrip() + "\n" + EXTRA_SCHEDULES + EXTRA_OUTPUTS
 
-    os.makedirs(os.path.dirname(OUTPUT_IDF), exist_ok=True)
-    with open(OUTPUT_IDF, "w", encoding="latin-1") as f:
+    dest = out_path or OUTPUT_IDF
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    with open(dest, "w", encoding="latin-1") as f:
         f.write(text)
 
-    return OUTPUT_IDF
+    return dest
 
 
 if __name__ == "__main__":
