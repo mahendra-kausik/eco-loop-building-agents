@@ -52,8 +52,12 @@ OCCUPANCY_SCHEDULE = "OCCUPY-1"
 J_PER_KWH = 3.6e6
 
 # Controller signature: takes the last completed hourly row (or None before the
-# first hour exists) and returns (heating_setpoint_c, cooling_setpoint_c).
-Controller = Callable[[Optional[dict]], tuple[float, float]]
+# first hour exists), plus the day/hour/day-of-week being decided FOR (rows[-1] is
+# the hour before -- passing the target hour explicitly is what lets a controller
+# see occupancy/forecast context ahead of the row that would otherwise reveal it,
+# e.g. pre-cooling before occupancy starts), and returns
+# (heating_setpoint_c, cooling_setpoint_c).
+Controller = Callable[[Optional[dict], int, int, int], tuple[float, float]]
 
 
 class EnergyPlusRunner:
@@ -226,7 +230,9 @@ class EnergyPlusRunner:
 
         try:
             last_row = self.rows[-1] if self.rows else None
-            heating_c, cooling_c = self.controller(last_row)
+            day_of_year, hour = hour_key
+            day_of_week = exchange.day_of_week(state)
+            heating_c, cooling_c = self.controller(last_row, day_of_year, hour, day_of_week)
         except Exception as exc:  # noqa: BLE001 -- deliberately broad, see docstring
             self.controller_errors.append((hour_key[0], hour_key[1], str(exc)))
             return  # leave whatever setpoints are already applied in place

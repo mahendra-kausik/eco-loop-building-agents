@@ -17,7 +17,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from src.agent import fallback  # noqa: E402
+from src.agent import fallback, safety  # noqa: E402
 from src.simulation.eplus_path import ENERGYPLUS_DIR  # noqa: E402
 from src.simulation.idf_prep import build_baseline_idf  # noqa: E402
 from src.simulation.runner import EnergyPlusRunner  # noqa: E402
@@ -28,6 +28,7 @@ SMOKE_IDF = os.path.join(OUTPUT_DIR, "smoke.idf")
 
 def main() -> None:
     fallback.demo()  # raises on failure -- clamp logic checked before spending E+ time
+    safety.demo()  # raises on failure -- LLM JSON validation checked, no network needed
 
     idf_path = build_baseline_idf(days=2, out_path=SMOKE_IDF)
     epw_path = os.path.join(

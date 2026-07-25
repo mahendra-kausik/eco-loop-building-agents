@@ -34,10 +34,15 @@ def clamp_setpoints(heating: float, cooling: float, occupied: bool) -> tuple[flo
     return heating, cooling
 
 
-def fallback_controller(row: dict | None) -> tuple[float, float]:
+def fallback_controller(
+    row: dict | None, day_of_year: int = 0, hour: int = 0, day_of_week: int = 0
+) -> tuple[float, float]:
     """row is the most recently completed hourly reading (EnergyPlusRunner.rows[-1]),
     or None on the very first control hour before any row exists. Occupancy comes
-    from the OCCUPY-1 schedule value already in the row, not calendar math."""
+    from the OCCUPY-1 schedule value already in the row, not calendar math -- this
+    is deliberately reactive (Phase 3's LLM gets forecast context instead; that's
+    the whole point of the upgrade). day_of_year/hour/day_of_week are accepted for
+    Controller-signature compatibility (src/simulation/runner.py) and unused here."""
     occupied = row is not None and row.get("occupancy_frac", 0.0) > 0.0
 
     if occupied:
