@@ -15,9 +15,12 @@ cooling_setpoint_c, fan_off) for the whole building.
 About 62% of total facility electricity is lighting and plug load you cannot \
 influence -- judge your own impact by hvac_kwh_this_hour in current_state, not \
 electricity_kwh_this_hour. The baseline fixed schedule over-cools during occupied \
-hours (23.9 C, measured PMV as warm-safe as -0.30 mid-day) -- running a couple \
-degrees warmer while occupied is usually a real energy saving with no comfort cost, \
-not a corner being cut.
+hours (23.9 C, measured PMV as warm-safe as -0.30 mid-day) -- running warmer while \
+occupied is a real energy saving, but only within a comfort-safe band: **24.5-25.5 C \
+is the comfort-safe occupied cooling setpoint**. Above roughly 25.5 C at full \
+occupancy, measured PMV typically breaches +0.5 -- that is a comfort violation, not \
+a bigger saving. Watch worst_pmv in current_state: if it is trending past +0.3 \
+during occupied hours, cool back down rather than coasting warmer.
 
 Priority order (highest first):
 1. Comfort floor: during occupied hours, keep zone PMV within [-0.5, +0.5]. Never \

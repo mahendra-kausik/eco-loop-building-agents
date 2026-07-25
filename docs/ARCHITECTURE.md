@@ -313,14 +313,14 @@ runner's own accumulation (see the metering-correction section above).
 | Run | Total elec. kWh | HVAC kWh | Comfort in-band | Gas kWh | kg CO2 |
 |---|---|---|---|---|---|
 | Baseline (fixed schedule) | 1100.0 | 413.6 | 80.7% | 32.9 | 663.8 |
-| Agent, rule-based floor (no LLM) | 1018.3 | 331.9 | **92.0%** | **0.0** | 610.3 |
-| Agent, LLM + supervisor | **1012.8** | **326.4** | 86.2% | 3.2 | 612.4 |
+| Agent, rule-based floor (no LLM) | **1018.3** | **331.9** | **92.0%** | **0.0** | 610.3 |
+| Agent, LLM + supervisor | 1021.8 | 335.4 | 90.5% | 2.8 | 616.3 |
 
 - **Rule-based floor:** +7.4% total / +19.8% HVAC, comfort **up 11.3 points**,
   reheat gas eliminated entirely.
-- **LLM + supervisor:** +7.9% total / **+21.1% HVAC**, comfort up 5.5 points.
-  168/168 injections, 0 controller errors, 20% fallback, latency p50 868 ms /
-  p95 1727 ms.
+- **LLM + supervisor:** +7.1% total / +18.9% HVAC, comfort up 9.8 points.
+  168/168 injections, 0 controller errors, 3.6% fallback (6/168), 2 retried,
+  latency p50 1176 ms / p95 2086 ms.
 
 Both beat baseline on energy *and* comfort simultaneously — savings are not
 bought at occupants' expense. The three changes driving it, in order of
@@ -331,15 +331,30 @@ first occupied hour the right clamp range instead of the previous hour's, and
 toward the middle of the CLAUDE.md-locked 24–28 °C occupied range.
 
 **Where the LLM currently stands versus the deterministic floor — stated
-plainly:** it wins on energy by a small margin (+0.5 pts total, +1.3 pts HVAC)
-but gives back 5.8 comfort points and reintroduces 3.2 kWh of reheat gas the
-floor had eliminated. Weighted against the rubric (comfort 20%, energy 25%),
-that trade is roughly neutral — **the rule-based floor is presently the better
-all-round controller**, and it is also what the supervisor falls back to, so
-the system's worst case is its strongest configuration. The LLM's qualitative
-decisions are sound (correct `fan_off` calls, forecast-aware pre-conditioning);
-its weakness is drifting warm during occupied hours, which is a prompt/guard
-issue rather than an architecture one — see the deferred list.
+plainly:** a closeout tuning pass (see below) narrowed the comfort gap from
+5.8 points to 1.5 (90.5% vs 92.0%), but the floor still leads on every
+measured axis — energy (0.3 pts total kWh, 0.9 pts HVAC) and comfort alike.
+Weighted against the rubric (comfort 20%, energy 25%), **the rule-based floor
+remains the better all-round controller**, and it is also what the supervisor
+falls back to, so the system's worst case is its strongest configuration. The
+LLM's qualitative decisions are sound (correct `fan_off` calls, forecast-aware
+pre-conditioning), and genuine participation rose sharply in this pass (20%→
+3.6% fallback) — it simply hasn't closed the remaining gap.
+
+**Closeout tuning attempt (Phase 4 close, one pass, not iterated further).**
+The decision log showed the LLM applying occupied cooling as warm as 26.0–
+26.5 °C — near or past the PMV +0.5 boundary at full occupancy, versus the
+floor's fixed 25.0 °C. Root cause was prompt guidance ("running a couple
+degrees warmer... is usually a real energy saving with no comfort cost") that
+named no upper bound, so the model drifted toward the clamp's 28 °C occupied
+ceiling. `src/agent/prompts.py` now names **24.5–25.5 °C as the comfort-safe
+occupied band**, states that PMV typically breaches +0.5 above roughly 25.5 °C
+at full occupancy, and points the model at `worst_pmv` (already in the state
+digest) as a cool-back-down signal. Measured result: comfort improved 4.3
+points (86.2%→90.5%) at a cost of 2.2 pts HVAC savings (21.1%→18.9%) — short
+of the ≥92.0%/≥21.1% bar set for this pass. Per the project's own reliability-
+first framing, this is documented as a known, honestly-measured limitation
+rather than a reason to keep iterating the prompt.
 
 62% of total facility electricity is lighting/plug load that neither setpoints
 nor fan control can touch, which is why neither run reaches the ≥10%
@@ -357,9 +372,10 @@ the flattering one.
   the upgrade path if the MCP demo needs it.
 - **Dashboard / evidence package** — Phase 5's job; `src/analysis/metrics.py`
   is the data layer Phase 5's `dashboard.py` will read from.
-- **Closing the LLM's comfort gap vs the deterministic floor** (5.8 points).
-  The LLM drifts warm during occupied hours. Two candidate fixes, neither
-  architectural: tighten the occupied-hours guidance in `prompts.py`, or have
-  the supervisor reject LLM setpoints that would push predicted PMV past +0.5
-  (a comfort-side analogue of the existing fan guard). Deferred because the
-  floor already covers this case and the supervisor falls back to it.
+- **Closing the LLM's remaining comfort gap vs the deterministic floor**
+  (1.5 points, narrowed from 5.8 by the closeout prompt tuning above). One
+  candidate fix remains, not yet tried: have the supervisor reject LLM
+  setpoints that would push predicted PMV past +0.5 (a comfort-side analogue
+  of the existing fan guard) rather than relying on prompt guidance alone.
+  Deferred because the floor already covers this case and the supervisor
+  falls back to it.

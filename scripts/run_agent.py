@@ -64,6 +64,7 @@ def main() -> None:
     parser.add_argument("--controller", choices=["fallback", "llm", "mcp"], default="llm")
     parser.add_argument("--days", type=int, default=7)
     parser.add_argument("--output-dir", default=None)
+    parser.add_argument("--decision-log", default=DECISION_LOG)
     args = parser.parse_args()
 
     output_dir = args.output_dir or os.path.join(
@@ -75,7 +76,7 @@ def main() -> None:
     elif args.controller == "llm":
         from src.agent.safety import make_llm_controller
 
-        controller = make_llm_controller(log_path=DECISION_LOG, run_dir=output_dir)
+        controller = make_llm_controller(log_path=args.decision_log, run_dir=output_dir)
     else:
         controller = _make_mcp_controller()
 
@@ -116,7 +117,7 @@ def main() -> None:
     )
 
     if args.controller == "llm":
-        log_summary = summarize_decision_log(DECISION_LOG, args.days)
+        log_summary = summarize_decision_log(args.decision_log, args.days)
         if log_summary:
             latency = (
                 f", latency p50={log_summary['latency_p50_ms']:.0f}ms p95={log_summary['latency_p95_ms']:.0f}ms"

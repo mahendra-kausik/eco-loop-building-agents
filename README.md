@@ -15,11 +15,11 @@ self-reported total — see `docs/ARCHITECTURE.md`'s metering-correction note.
 
 | Metric | Baseline | LLM + supervisor | Rule-based floor (no LLM) |
 |---|---|---|---|
-| Total facility electricity (kWh) | 1100.0 | **1012.8** (+7.9%) | 1018.3 (+7.4%) |
-| HVAC-only electricity (kWh) | 413.6 | **326.4** (+21.1%) | 331.9 (+19.8%) |
-| Occupied hours with PMV in [-0.5, +0.5] | 80.7% | 86.2% (+5.5 pts) | **92.0%** (+11.3 pts) |
-| Reheat gas (kWh) | 32.9 | 3.2 | **0.0** |
-| CO2 (kg, grid-intensity weighted) | 663.8 | 612.4 | 610.3 |
+| Total facility electricity (kWh) | 1100.0 | 1021.8 (+7.1%) | **1018.3** (+7.4%) |
+| HVAC-only electricity (kWh) | 413.6 | 335.4 (+18.9%) | **331.9** (+19.8%) |
+| Occupied hours with PMV in [-0.5, +0.5] | 80.7% | 90.5% (+9.8 pts) | **92.0%** (+11.3 pts) |
+| Reheat gas (kWh) | 32.9 | 2.8 | **0.0** |
+| CO2 (kg, grid-intensity weighted) | 663.8 | 616.3 | 610.3 |
 | Simulated days without a crash | — | 14+ (2x standard horizon) | 14+ |
 
 Both configurations beat baseline on energy **and** comfort at the same time —
@@ -30,13 +30,15 @@ Two caveats we'd rather state than bury:
 - **~62% of facility electricity is lighting/plug load** that no setpoint or fan
   decision can touch. That's why HVAC-only % is the honest measure of what
   supervisory control actually moves, and why we report both numbers.
-- **The LLM edges the deterministic floor on energy but trails it on comfort**
-  (+1.3 pts HVAC, −5.8 pts comfort). Weighted against the evaluation criteria
-  that trade is about neutral, so the rule-based floor is currently the better
-  all-round controller — and since the supervisor falls back to exactly that
-  floor on any LLM failure, the system's worst case is its strongest
-  configuration. Closing the gap is a prompt/guard change, not an architectural
-  one ([`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)).
+- **The rule-based floor now beats the LLM on every measured axis.** A prompt
+  change narrowed the occupied-hours cooling guidance to a comfort-safe
+  24.5–25.5 °C band, which cut the comfort gap from 5.8 points to 1.5 (90.5%
+  vs 92.0%) but cost a small amount of energy in the process (0.3 pts total
+  kWh, 0.9 pts HVAC). Genuine LLM participation also rose sharply — fallback
+  usage dropped from 20% to 3.6% of decisions. Since the supervisor falls back
+  to exactly the deterministic floor on any LLM failure, the system's worst
+  case is still its strongest configuration
+  ([`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)).
 
 Dashboard: `results/dashboard.html` (Phase 5) · Demo video: _link TBD_
 
