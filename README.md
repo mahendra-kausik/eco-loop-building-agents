@@ -15,11 +15,12 @@ self-reported total — see `docs/ARCHITECTURE.md`'s metering-correction note.
 
 | Metric | Baseline | LLM + supervisor | Rule-based floor (no LLM) |
 |---|---|---|---|
-| Total facility electricity (kWh) | 1100.0 | **1004.6** (+8.7%) | 1018.3 (+7.4%) |
-| HVAC-only electricity (kWh) | 413.6 | **318.2** (+23.1%) | 331.9 (+19.8%) |
+| Total facility electricity (kWh) | 1100.1 | **1003.6** (+8.8%) | 1018.4 (+7.4%) |
+| HVAC-only electricity (kWh) | 413.7 | **317.3** (+23.3%) | 332.0 (+19.7%) |
 | Occupied hours with PMV in [-0.5, +0.5] | 80.7% | **93.1%** (+12.4 pts) | 92.0% (+11.3 pts) |
-| Reheat gas (kWh) | 32.9 | **2.1** | 0.0 |
-| CO2 (kg, grid-intensity weighted) | 663.8 | **602.9** | 610.3 |
+| Reheat gas (kWh) | 32.9 | **3.6** | 0.0 |
+| Peak demand (kW) | 19.9 | **19.0** | — |
+| CO2 (kg, grid-intensity weighted) | 663.8 | **602.2** | 610.4 |
 | Simulated days without a crash | — | 14+ (2x standard horizon) | 14+ |
 
 The LLM now beats its own deterministic fallback on every axis at once —
@@ -39,11 +40,12 @@ completed* hour, so at the last occupied hour of the day the LLM was reading
 building — 20+ kWh/day of pure waste, plus all of the run's reheat gas.
 Adding an explicit `decision_hour_occupied` flag to the forecast context (the
 hour actually being decided for, distinct from the state digest's hour) let
-the model self-correct with no supervisor override needed — 0 of 168
-decisions required the comfort guard or a fallback this run
+the model self-correct with no supervisor override needed — the comfort guard
+never had to fire this run (0 of 168), and only 3 of 168 decisions fell back
+to the deterministic controller (a provider hiccup, not a model failure)
 ([`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)).
 
-Dashboard: `results/dashboard.html` (Phase 5) · Demo video: _link TBD_
+Dashboard: [`results/dashboard.html`](results/dashboard.html) · Demo video: _link TBD_
 
 ## Architecture
 

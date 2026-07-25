@@ -17,6 +17,22 @@ UNOCCUPIED_HEATING_RANGE = (15.0, 23.0)
 UNOCCUPIED_COOLING_RANGE = (24.0, 30.0)
 MIN_DEADBAND_C = 1.0
 
+# Phase 5 investigated, NOT shipped: optimal-start pre-heat (raising heating
+# during the hours right before occupancy) to close the hour-8 cold-side PMV
+# violation shared identically by baseline/floor/LLM (12/275 zone-hours, see
+# docs/ARCHITECTURE.md). Measured, not assumed: tried 1h lead @ 21C (violation
+# count UNCHANGED at 12), 2h lead @ 21C (still unchanged at 12), and 2h lead @
+# 23C -- UNOCCUPIED_HEATING_RANGE's own ceiling, as aggressive as the locked
+# clamp range allows (11/275, a 1-zone-hour dent) while reheat gas spiked from
+# 0.0 to 51.2 kWh and HVAC savings fell 19.8%->10.5%. Independently confirmed
+# structural rather than a scheduling gap: the baseline schedule ALREADY runs
+# its AHU fan 06:00-20:00, a 2-hour lead over the 08:00-19:00 occupancy window,
+# and has the identical violation anyway -- this building's zone thermal
+# recovery is capacity-limited, not lead-time-limited, so no setpoint-only lever
+# fixes it without a cost that outweighs the benefit. Reported here rather than
+# silently dropped, per this project's practice of shipping measured results,
+# not hoped ones.
+
 # Phase 4: optimal stop for the AHU fan. FanAvailSched runs 06:00-20:00 in the
 # baseline regardless of the 08:00-19:00 occupancy schedule -- 5%+ of total
 # facility electricity spent conditioning an empty building. This margin is the
@@ -26,7 +42,11 @@ FAN_OFF_TEMP_MARGIN_C = 1.0
 
 
 def clamp_fan_available(
-    requested_off: bool, hour: int, day_of_week: int, max_zone_temp_c: float | None, cooling_setpoint_c: float
+    requested_off: bool,
+    hour: int,
+    day_of_week: int,
+    max_zone_temp_c: float | None,
+    cooling_setpoint_c: float,
 ) -> float:
     """The single source of truth for the fan safety guard (same role as
     clamp_setpoints, for the third actuator). Fans may only be forced OFF (0.0)
@@ -34,7 +54,22 @@ def clamp_fan_available(
     there's no latent cooling demand (max_zone_temp_c comfortably below the
     cooling setpoint -- None, e.g. no prior row yet, means "unknown" and is
     treated as demand present). Otherwise fans stay ON (1.0) no matter what was
-    requested -- ventilation for occupants is never negotiable."""
+    requested -- ventilation for occupants is never negotiable.
+
+    Investigated, NOT gated on CO2: this building's DesignSpecification:OutdoorAir
+    is per-person, so outdoor-air intake -- and CO2 removal -- drops to near zero
+    once occupancy hits 0, regardless of fan state. Measured: max zone CO2 sits
+    flat around 1060ppm for 6+ straight unoccupied hours with the fan ON the
+    whole time, never dropping below a naive 1000ppm comfort threshold. Gating
+    fan-off on "CO2 already below threshold" is therefore an unreachable
+    condition for most of the night in this model -- it silently disabled every
+    fan-off decision (0/113 unoccupied hours, was routinely >0 before), costing
+    ~35 kWh HVAC for zero actual safety benefit, since this guard's own
+    both-hours-unoccupied check already forces the fan back ON at least one hour
+    before occupants arrive regardless of CO2 -- nobody is ever present under a
+    fan-off decision. CO2 stays a first-class SENSED value (get_building_state,
+    the LLM prompt) -- IAQ awareness without deadlocking a proven working
+    optimal-stop feature on it."""
     next_hour = (hour + 1) % 24
     next_day_of_week = day_of_week if hour + 1 < 24 else (day_of_week % 7) + 1
     both_unoccupied = not is_occupied_hour(hour, day_of_week) and not is_occupied_hour(

@@ -33,8 +33,15 @@ during occupied hours, cool back down rather than coasting warmer.
 
 Priority order (highest first):
 1. Comfort floor: during occupied hours, keep zone PMV within [-0.5, +0.5]. Never \
-sacrifice this to save energy.
-2. Energy: minimize hvac_kwh_this_hour. Pre-cool/pre-heat AHEAD of occupancy using \
+sacrifice this to save energy. mean_zone_rh_pct is also in current_state if humidity \
+looks like it's contributing to discomfort alongside PMV.
+2. Peak demand: current_state.peak_kw_so_far is the highest hourly electricity draw \
+this run has hit so far; peak_demand_threshold_kw is the target ceiling. If a large \
+setpoint move (e.g. a big pre-cool/pre-heat step) would push this hour's demand \
+toward or past that threshold, spread the conditioning over more hours instead of \
+one big one -- a smaller, earlier move usually reaches the same temperature without \
+spiking demand.
+3. Energy: minimize hvac_kwh_this_hour. Pre-cool/pre-heat AHEAD of occupancy using \
 the forecast (hours_until_occupancy and hours_ahead[].outdoor_temp_c -- a hot day \
 coming needs an earlier start than a mild one) so you are not fighting a large \
 temperature gap once people arrive. Setback aggressively when hours_until_occupancy \
@@ -43,12 +50,16 @@ unoccupied hours with no upcoming occupancy soon -- a supervisor guard only hono
 this when it's actually safe (both this hour and the next are unoccupied AND zone \
 temps already have no latent cooling load), so requesting it costs nothing when it \
 isn't applicable.
-3. Carbon/cost: when there is slack (unoccupied, or comfort is already in-band), \
+4. Carbon/cost: when there is slack (unoccupied, or comfort is already in-band), \
 prefer shifting any pre-conditioning into hours with low carbon_gco2_per_kwh (see \
 cheapest_hour/dirtiest_hour) or low tariff_per_kwh (see cheapest_tariff_hour/priciest_tariff_hour \
 from the forecast) -- they don't always pick the same hour, and \
 tariff has the wider swing of the two. Avoid unnecessary conditioning during \
 dirtiest_hour or priciest_tariff_hour.
+
+If recent_errors is present, it lists recent system-reliability issues (LLM \
+provider rate-limits, EnergyPlus warnings) -- context only, not a reason to change \
+setpoints unless one names an actual building fault (e.g. a stuck actuator).
 
 Hard limits (a supervisor clamps these outside your control, so give a value inside \
 them or it will be overridden -- also caps hour-to-hour movement to 1.5 C except \

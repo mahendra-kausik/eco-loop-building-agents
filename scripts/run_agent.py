@@ -103,6 +103,21 @@ def main() -> None:
     assert runner.controller_errors == [], f"controller raised errors: {runner.controller_errors}"
     assert runner.injections == expected_rows, f"expected {expected_rows} injections, got {runner.injections}"
 
+    # Deliverable 2 also asks for "the modified versions generated during
+    # runtime evaluation" alongside the baseline. Only the canonical 7-day case
+    # writes into models/ (not gitignored, unlike results/raw/) -- see
+    # src/simulation/idf_prep.py:export_runtime_idf for why this bakes the
+    # ACTUAL applied setpoint/fan values rather than being a duplicate of
+    # baseline.idf.
+    if args.days == 7:
+        from src.simulation.idf_prep import export_runtime_idf
+
+        runtime_idf_path = os.path.join(
+            os.path.dirname(__file__), "..", "models", f"agent_{args.controller}_runtime.idf"
+        )
+        export_runtime_idf(runner.rows, idf_path, runtime_idf_path)
+        print(f"Wrote runtime-modified IDF -> {runtime_idf_path}")
+
     # summarize() reads eplusmtr.csv (EnergyPlus's own meter output) + state.csv,
     # both already written into output_dir by runner.run() -- see
     # src/analysis/metrics.py's module docstring for why the meter file, not our

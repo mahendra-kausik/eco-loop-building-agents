@@ -45,6 +45,7 @@ TEMP_VARIABLE = "Zone Mean Air Temperature"
 OUTDOOR_TEMP_VARIABLE = "Site Outdoor Air Drybulb Temperature"
 PMV_VARIABLE = "Zone Thermal Comfort Fanger Model PMV"
 HUMIDITY_VARIABLE = "Zone Air Relative Humidity"
+CO2_VARIABLE = "Zone Air CO2 Concentration"
 
 # Confirmed via scripts/probe_handles.py: 'Electricity:Facility' is listed in
 # list_available_api_data_csv() but reproducibly fails to resolve via
@@ -125,6 +126,7 @@ class EnergyPlusRunner:
         specs.append((OUTDOOR_TEMP_VARIABLE, "Environment"))
         specs += [(PMV_VARIABLE, p) for p in PEOPLE_OBJECTS]
         specs += [(HUMIDITY_VARIABLE, z) for z in ZONES]
+        specs += [(CO2_VARIABLE, z) for z in ZONES]
         # 'Schedule Value' as a plain variable gives the schedule's actual current
         # number. get_actuator_value() on the same schedule reads back an override
         # instead (0.0 until something calls set_actuator_value -- confirmed by
@@ -246,6 +248,9 @@ class EnergyPlusRunner:
             snapshot[f"{zone}_rh_pct"] = exchange.get_variable_value(
                 state, self._handles[("var", HUMIDITY_VARIABLE, zone)]
             )
+            snapshot[f"{zone}_co2_ppm"] = exchange.get_variable_value(
+                state, self._handles[("var", CO2_VARIABLE, zone)]
+            )
         for zone, person in zip(ZONES, PEOPLE_OBJECTS):
             snapshot[f"{zone}_pmv"] = exchange.get_variable_value(
                 state, self._handles[("var", PMV_VARIABLE, person)]
@@ -286,6 +291,7 @@ class EnergyPlusRunner:
         for zone in ZONES:
             row[f"{zone}_temp_c"] = snap[f"{zone}_temp_c"]
             row[f"{zone}_rh_pct"] = snap[f"{zone}_rh_pct"]
+            row[f"{zone}_co2_ppm"] = snap[f"{zone}_co2_ppm"]
         for zone in ZONES:
             row[f"{zone}_pmv"] = snap[f"{zone}_pmv"]
 

@@ -96,16 +96,20 @@ def make_llm_controller(log_path: Optional[str] = None, run_dir: Optional[str] =
     log_path = log_path or os.path.join(os.path.dirname(__file__), "..", "..", "results", "decision_log.jsonl")
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
 
-    # Mutable closure state for the anti-thrash rate limit -- last setpoints
-    # actually applied, and the occupancy state they were applied under.
-    last = {"heating": None, "cooling": None, "occupied": None}
+    # Mutable closure state: last setpoints actually applied + the occupancy
+    # state they were applied under (anti-thrash rate limit), plus a running
+    # peak-demand max (get_building_state only ever sees one row, so it can't
+    # track "so far" itself -- see that function's peak_kw_so_far docstring).
+    last = {"heating": None, "cooling": None, "occupied": None, "peak_kw_so_far": 0.0}
 
     def controller(row: Optional[dict], day_of_year: int, hour: int, day_of_week: int) -> tuple[float, float, float]:
         # Predicted for the hour being decided FOR, not read reactively off the
         # last completed row -- see fallback.fallback_controller's docstring for
         # the bug this fixes (occupancy onset hour got the unoccupied clamp).
         occupied = is_occupied_hour(hour, day_of_week)
-        state = get_building_state(row)
+        if row is not None:
+            last["peak_kw_so_far"] = max(last["peak_kw_so_far"], float(row.get("electricity_kwh_this_hour", 0.0)))
+        state = get_building_state(row, peak_kw_so_far=last["peak_kw_so_far"] if row is not None else None)
         forecast = get_forecast_context(day_of_year, hour, day_of_week)
         recent_errors = get_recent_errors(run_dir=run_dir)
 

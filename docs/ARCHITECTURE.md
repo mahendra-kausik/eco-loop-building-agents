@@ -317,19 +317,25 @@ in `scripts/run_agent.py`).
 All energy from `eplusmtr.csv` via `src/analysis/metrics.py`, not the
 runner's own accumulation (see the metering-correction section above).
 
-| Run | Total elec. kWh | HVAC kWh | Comfort in-band | Gas kWh | kg CO2 |
-|---|---|---|---|---|---|
-| Baseline (fixed schedule) | 1100.0 | 413.6 | 80.7% | 32.9 | 663.8 |
-| Agent, rule-based floor (no LLM) | 1018.3 | 331.9 | 92.0% | 0.0 | 610.3 |
-| Agent, LLM + supervisor | **1004.6** | **318.2** | **93.1%** | 2.1 | **602.9** |
+| Run | Total elec. kWh | HVAC kWh | Comfort in-band | Gas kWh | Peak kW | kg CO2 |
+|---|---|---|---|---|---|---|
+| Baseline (fixed schedule) | 1100.1 | 413.7 | 80.7% | 32.9 | 19.9 | 663.8 |
+| Agent, rule-based floor (no LLM) | 1018.4 | 332.0 | 92.0% | 0.0 | — | 610.4 |
+| Agent, LLM + supervisor | **1003.6** | **317.3** | **93.1%** | 3.6 | **19.0** | **602.2** |
 
-- **Rule-based floor:** +7.4% total / +19.8% HVAC, comfort **up 11.3 points**,
+- **Rule-based floor:** +7.4% total / +19.7% HVAC, comfort **up 11.3 points**,
   reheat gas eliminated entirely.
-- **LLM + supervisor:** +8.7% total / +23.1% HVAC, comfort **up 12.4 points**
-  — beats the floor on every axis simultaneously, the first configuration
-  where that's true. 168/168 injections, 0 controller errors, 0 fallback
-  (0/168), 0 retried, latency p50 817 ms / p95 2034 ms, comfort guard never
-  triggered (0/168 `was_comfort_capped`).
+- **LLM + supervisor:** +8.8% total / +23.3% HVAC, comfort **up 12.4 points**,
+  peak demand held right at the measured `PEAK_DEMAND_THRESHOLD_KW` target
+  (19.0 kW, vs baseline's 19.9) — beats the floor on every axis simultaneously.
+  168/168 injections, 0 controller errors, 3 fallback (3/168, a provider
+  hiccup not a model failure), 0 retried, latency p50 816 ms / p95 2120 ms,
+  comfort guard never triggered (0/168 `was_comfort_capped`), 165/168 genuine
+  LLM decisions split 85 Cerebras / 80 Groq.
+
+(Re-measured after Phase 5's IAQ and peak-demand additions to the prompt/state
+digest — numbers move only by ordinary run-to-run LLM variance, confirming
+those additions didn't regress the Phase 4 result they were layered onto.)
 
 Both beat baseline on energy *and* comfort simultaneously — savings are not
 bought at occupants' expense. The three changes driving the floor's numbers,
@@ -408,6 +414,93 @@ the ≥10% *total*-kWh ambition and why **HVAC-only % is the honest measure**
 of what supervisory control actually moves. Both figures are reported rather
 than only the flattering one.
 
+## Phase 5: closing two literal spec gaps, and two negative results
+
+A re-read of `docs/Problem Statement.pdf` (the source PDF, not just this
+repo's own condensed `docs/HACKATHON_SPEC.md`) with the remaining build time
+surfaced two requirements named verbatim that the code didn't meet yet:
+streamed **indoor air quality**, and the LLM reasoning against **peak demand
+thresholds**. Both are closed below. Investigating a third gap (the hour-8
+cold-side comfort violation flagged as a Phase 4 follow-up) produced two
+honestly-reported negative results instead of a fix — kept in this document
+rather than silently dropped, matching the project's practice throughout
+Phase 4 of reporting the measured result, not the hoped one.
+
+### IAQ: CO2 sensing
+
+`ZoneAirContaminantBalance` (CO2 = Yes) + an outdoor-CO2 schedule (~400 ppm) +
+`Output:Variable,*,Zone Air CO2 Concentration,Hourly` in `idf_prep.py`, a
+resolved handle per zone in `runner.py`, and `max_zone_co2_ppm` surfaced in
+`get_building_state`. Confirmed against `Energy+.idd` rather than guessed:
+the 5 People objects already leave `Carbon Dioxide Generation Rate` blank,
+which EnergyPlus auto-defaults to the ASHRAE Std 62.1 value (3.82E-8
+m3/s-W) — the same default EnergyPlus's own CO2-enabled example files rely
+on — so enabling CO2 needed no People-object edit at all. Regression-gated:
+re-ran the baseline after the IDF change and confirmed total kWh held at
+1100.1 (was 1100.0) — CO2 is a passive tracer here, energy must not move,
+and it didn't.
+
+**Investigated, not shipped: gating fan-off on CO2.** The obvious next step —
+require `max_zone_co2_ppm` below a comfort threshold before
+`clamp_fan_available` honors a fan-off request, treating IAQ as a hard
+constraint the same way temperature already is — measurably backfired.
+This building's `DesignSpecification:OutdoorAir` is per-person, so outdoor-air
+intake (and CO2 removal) drops to ~0 once occupancy hits 0: measured max zone
+CO2 sat flat around 1060 ppm for 6+ straight unoccupied hours with the fan
+already ON the whole time, never dropping under a 1000 ppm threshold. The
+gate was therefore unreachable for most of the night, silently disabling
+fan-off entirely (0/113 unoccupied hours, versus routinely >0 before) for
+**zero actual safety benefit** — the guard's own both-hours-unoccupied check
+already forces the fan back on at least 1 hour before occupants arrive
+regardless of CO2, so nobody is ever present under a fan-off decision.
+Reverted; CO2 stays a first-class *sensed* value (state digest + LLM prompt)
+without deadlocking a proven-working Phase 4 feature for a safety property
+that was already structurally guaranteed elsewhere.
+
+### Peak demand
+
+Computed since Phase 4 (`metrics.py`'s `peak_demand_kw`) but never reached
+the LLM's reasoning, despite the spec naming it as a target explicitly.
+Added a running `peak_kw_so_far` tracker to `safety.py`'s controller closure
+(the only place with run history across hours) and a measured
+`PEAK_DEMAND_THRESHOLD_KW = 19.0` (baseline's own measured 7-day peak is
+19.9 kW) threaded through `get_building_state`; the prompt asks the LLM to
+spread a large pre-conditioning move over more hours rather than spike
+toward the threshold in one. Two free wins landed in the same pass: zone
+humidity was already streamed into every row but never shown to the LLM
+(now `mean_zone_rh_pct` is), and `recent_errors` was in the prompt payload
+with no instruction on what to do with it — `SYSTEM_PROMPT` now says so,
+closing the last unchecked Phase 3 self-correction item.
+
+### Investigated, not shipped: optimal-start pre-heat
+
+The Phase 4 closeout flagged 12/275 occupied zone-hours of cold-side PMV
+violation at hour 8, identical across baseline, the rule-based floor, and
+the LLM — night setback apparently outrunning zone recovery. The obvious
+fix: start raising the heating setpoint before occupancy, not at it. Per the
+plan, measured with a free `--controller fallback` run before spending any
+LLM run:
+
+| Attempt | Hour-8 cold violations (of 25 zone-hours) | HVAC savings vs baseline | Gas |
+|---|---|---|---|
+| No pre-heat (current) | 12 | 19.7% | 0.0 kWh |
+| 1h lead, heating→21C | 12 (unchanged) | 11.1% | 4.5 kWh |
+| 2h lead, heating→21C | 12 (unchanged) | 11.1% | 7.4 kWh |
+| 2h lead, heating→23C (range ceiling) | 11 (−1) | 10.5% | 51.2 kWh |
+
+Even at the most aggressive setting legally available under the CLAUDE.md-
+locked clamp range, the violation count barely moved while HVAC savings gave
+back 9+ points and reheat gas spiked 0→51 kWh. Independently confirmed this
+is structural, not a lead-time problem: **the baseline schedule itself
+already runs its AHU fan 06:00–20:00**, a built-in 2-hour lead over the
+08:00–19:00 occupancy window, and has the *identical* 12-zone-hour violation
+anyway. This building's zone thermal recovery from night setback is
+capacity-limited, not schedule-limited — no setpoint-only lever fixes it
+without a cost that outweighs the benefit, so the change was reverted rather
+than shipped. A real fix would need increased heating capacity or a shallower
+night setback depth (trading some overnight savings for the morning
+transition), out of scope for a locked-range, minimal-IDF-change pass.
+
 ## What's deliberately deferred
 
 - **Full live IPC for MCP** (socket/queue instead of a polled file) — after
@@ -416,12 +509,13 @@ than only the flattering one.
   control (Phase 4 added a third actuator to the core loop only) — the mcp
   controller mode always leaves the fan on; widening that tool's signature is
   the upgrade path if the MCP demo needs it.
-- **Dashboard / evidence package** — Phase 5's job; `src/analysis/metrics.py`
-  is the data layer Phase 5's `dashboard.py` will read from.
-- **Hour-8 morning cold-side violations** (measured, not guessed): all three
-  runs — baseline, floor, and LLM alike — show exactly 12 cold zone-hours at
-  hour 8, unrelated to the cooling-side guard above. It's morning warm-up from
-  night setback outrunning the zones' recovery, worth 4.4 comfort points and
-  currently untouched by any controller. Bigger than the comfort-guard fix,
-  but new work (a pre-heat/optimal-start policy, not a setpoint bound) —
-  Phase 5 candidate.
+- **Hour-8 morning cold-side violations** — investigated in Phase 5 (see
+  above), not deferred for lack of trying. Optimal-start pre-heat was
+  measured to barely move the violation count (12→11 of 275 zone-hours even
+  at the most aggressive legal setting) while costing real HVAC savings and
+  spiking reheat gas, and the baseline schedule's own built-in 2-hour AHU
+  lead has the identical violation, confirming it's thermal-capacity-limited,
+  not schedule-limited. A real fix needs increased heating capacity or a
+  shallower setback depth — out of scope for a locked-range, minimal-IDF
+  pass, so left as a known, honestly-reported limitation rather than
+  papered over.

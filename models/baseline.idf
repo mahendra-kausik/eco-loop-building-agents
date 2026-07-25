@@ -3606,10 +3606,22 @@
     For: AllDays,            !- Field 2
     Until: 24:00,0.137;      !- Field 3
 
+  Schedule:Compact,
+    Outdoor CO2 Schedule,    !- Name
+    Any Number,              !- Schedule Type Limits Name
+    Through: 12/31,          !- Field 1
+    For: AllDays,            !- Field 2
+    Until: 24:00,400.0;      !- Field 3
+
+  ZoneAirContaminantBalance,
+    Yes,                     !- Carbon Dioxide Concentration
+    Outdoor CO2 Schedule;    !- Outdoor Carbon Dioxide Schedule Name
+
   Output:Variable,*,Zone Mean Air Temperature,Hourly;
   Output:Variable,*,Site Outdoor Air Drybulb Temperature,Hourly;
   Output:Variable,*,Zone Thermal Comfort Fanger Model PMV,Hourly;
   Output:Variable,*,Zone Air Relative Humidity,Hourly;
+  Output:Variable,*,Zone Air CO2 Concentration,Hourly;
 
   Output:Meter,Electricity:Building,Hourly;
   Output:Meter,Electricity:HVAC,Hourly;

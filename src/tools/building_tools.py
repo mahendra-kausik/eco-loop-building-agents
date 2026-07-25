@@ -54,6 +54,22 @@ OCCUPIED_START_HOUR = 8
 OCCUPIED_END_HOUR = 19
 WEEKEND_DAYS = {1, 7}  # Sunday, Saturday
 
+# Spec ("evaluates this data against predefined targets like ... peak demand
+# thresholds"). Measured, not guessed: src/analysis/metrics.py's peak_demand_kw
+# on the baseline 7-day run is 19.9 kW (building+HVAC electricity, same hourly
+# total as electricity_kwh_this_hour below) -- set just under it so there's a
+# genuine peak-shaving incentive rather than a ceiling the agent clears by
+# default.
+PEAK_DEMAND_THRESHOLD_KW = 19.0
+
+# Spec ("indoor air quality"). ASHRAE 62.1's commonly-cited indoor CO2 guidance
+# is roughly 1000 ppm as the point where perceived air quality starts to
+# degrade for a typical office population (700 ppm above the ~400 ppm outdoor
+# baseline this IDF's ZoneAirContaminantBalance schedule uses -- see
+# idf_prep.py). Used as a hard constraint on fan shutoff, not merely advisory:
+# ventilation must never be turned off if it would let CO2 drift up unchecked.
+CO2_COMFORT_THRESHOLD_PPM = 1000.0
+
 
 def is_occupied_hour(hour: int, day_of_week: int) -> bool:
     if day_of_week in WEEKEND_DAYS:
@@ -108,16 +124,27 @@ def load_carbon_profile() -> list[dict]:
         ]
 
 
-def get_building_state(row: Optional[dict]) -> dict:
+def get_building_state(row: Optional[dict], peak_kw_so_far: Optional[float] = None) -> dict:
     """Compact digest of the most recently completed hourly reading. Fixed size
     regardless of how many zones/hours exist -- the LLM never sees a raw
-    5-zones-by-N-hours table (see docs/ARCHITECTURE.md's long-log strategy)."""
+    5-zones-by-N-hours table (see docs/ARCHITECTURE.md's long-log strategy).
+
+    peak_kw_so_far: the caller's running max of electricity_kwh_this_hour across
+    the run (this function only sees one row, so it can't track a running max
+    itself) -- None if the caller isn't tracking one (e.g. a one-off MCP query).
+    """
     if row is None:
         return {"available": False}
 
     zone_temps = {z: float(row[f"{z}_temp_c"]) for z in ZONES}
     zone_pmvs = {z: float(row[f"{z}_pmv"]) for z in ZONES}
+    zone_rh = {z: float(row[f"{z}_rh_pct"]) for z in ZONES}
     worst_zone = max(zone_pmvs, key=lambda z: abs(zone_pmvs[z]))
+
+    # CO2 is IAQ, not comfort -- a row from before this field existed (an old
+    # state.csv) just omits it, same fallback style as hvac_kwh_this_hour below.
+    zone_co2 = {z: float(row[f"{z}_co2_ppm"]) for z in ZONES if f"{z}_co2_ppm" in row}
+    max_co2_ppm = max(zone_co2.values()) if zone_co2 else None
 
     # hvac_kwh_this_hour falls back to the total for state.csv rows written before
     # the Phase 4 metering fix added the split (older results/raw/*/state.csv).
@@ -132,6 +159,7 @@ def get_building_state(row: Optional[dict]) -> dict:
         "mean_zone_temp_c": round(sum(zone_temps.values()) / len(zone_temps), 1),
         "min_zone_temp_c": round(min(zone_temps.values()), 1),
         "max_zone_temp_c": round(max(zone_temps.values()), 1),
+        "mean_zone_rh_pct": round(sum(zone_rh.values()) / len(zone_rh), 1),
         "worst_pmv_zone": worst_zone,
         "worst_pmv": round(zone_pmvs[worst_zone], 2),
         "current_heating_setpoint_c": round(float(row["heating_setpoint_c"]), 1),
@@ -142,6 +170,10 @@ def get_building_state(row: Optional[dict]) -> dict:
         # is the number that actually reflects setpoint/fan decisions.
         "electricity_kwh_this_hour": round(float(row["electricity_kwh_this_hour"]), 2),
         "hvac_kwh_this_hour": round(float(hvac_kwh), 2),
+        "peak_kw_so_far": round(peak_kw_so_far, 1) if peak_kw_so_far is not None else None,
+        "peak_demand_threshold_kw": PEAK_DEMAND_THRESHOLD_KW,
+        "max_zone_co2_ppm": round(max_co2_ppm, 0) if max_co2_ppm is not None else None,
+        "co2_comfort_threshold_ppm": CO2_COMFORT_THRESHOLD_PPM,
     }
 
 
@@ -310,6 +342,7 @@ def demo() -> None:
         "heating_setpoint_c": 21.0, "cooling_setpoint_c": 24.5, "electricity_kwh_this_hour": 5.2,
         "hvac_kwh_this_hour": 4.0, "fan_available": 1.0,
         **{f"{z}_temp_c": 23.0 for z in ZONES}, **{f"{z}_pmv": 0.1 for z in ZONES},
+        **{f"{z}_rh_pct": 45.0 for z in ZONES}, **{f"{z}_co2_ppm": 650.0 for z in ZONES},
     }
     sample_row["SPACE3-1_pmv"] = -0.9  # worst |PMV|
     state = get_building_state(sample_row)
@@ -317,10 +350,24 @@ def demo() -> None:
     assert state["worst_pmv"] == -0.9
     assert state["hvac_kwh_this_hour"] == 4.0
     assert state["fan_available"] is True
+    assert state["mean_zone_rh_pct"] == 45.0
+    # peak_kw_so_far/peak_demand_threshold_kw: None when the caller isn't
+    # tracking a running max (e.g. a one-off MCP query); present when it is.
+    assert state["peak_kw_so_far"] is None
+    assert get_building_state(sample_row, peak_kw_so_far=22.3)["peak_kw_so_far"] == 22.3
+    assert state["peak_demand_threshold_kw"] == PEAK_DEMAND_THRESHOLD_KW
+    assert state["max_zone_co2_ppm"] == 650.0
+    assert state["co2_comfort_threshold_ppm"] == CO2_COMFORT_THRESHOLD_PPM
 
     # hvac_kwh_this_hour falls back to the total for pre-Phase-4 rows that lack it.
     old_row = {k: v for k, v in sample_row.items() if k != "hvac_kwh_this_hour"}
     assert get_building_state(old_row)["hvac_kwh_this_hour"] == 5.2
+
+    # max_zone_co2_ppm is None for a row from before this field existed (an old
+    # state.csv without any *_co2_ppm columns) -- same graceful-degradation
+    # style as hvac_kwh_this_hour above, just returning None instead of a total.
+    no_co2_row = {k: v for k, v in sample_row.items() if not k.endswith("_co2_ppm")}
+    assert get_building_state(no_co2_row)["max_zone_co2_ppm"] is None
 
     result = inject_setpoints(10.0, 40.0, occupied=True)
     assert result["was_clamped"] is True

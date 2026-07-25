@@ -36,7 +36,10 @@ async def main() -> None:
 
             print("-- get_recent_errors --")
             errors = await session.call_tool("get_recent_errors", {"n": 5})
-            print(errors.content[0].text, "\n")
+            # An empty list is a legitimate, good result (no recent fallbacks/errors
+            # to report) -- FastMCP returns zero content blocks for it, not one
+            # block containing "[]", unlike the dict-returning tools above.
+            print(errors.content[0].text if errors.content else "[] (no recent errors)", "\n")
 
             print("-- inject_setpoints (21.0 heating, 24.5 cooling, occupied) --")
             injected = await session.call_tool(
