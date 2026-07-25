@@ -92,7 +92,12 @@ def propose_setpoints() -> dict:
 def inject_setpoints(heating_c: float, cooling_c: float, occupied: bool) -> dict:
     """Clamps to the hard safety range and writes results/pending_setpoints.json,
     which a running `python scripts/run_agent.py --controller mcp` picks up on
-    its next hourly poll and actuates into the live EnergyPlus instance."""
+    its next hourly poll and actuates into the live EnergyPlus instance.
+
+    Phase 4 added a third actuator (AHU fan optimal-stop) to the core loop's
+    LLM/fallback controllers, but not to this MCP tool -- the mcp controller
+    mode always leaves the fan on (see run_agent.py's _make_mcp_controller).
+    Widening this tool's signature is the upgrade path if the MCP demo needs it."""
     return building_tools.inject_setpoints(heating_c, cooling_c, occupied, write_pending=True)
 
 

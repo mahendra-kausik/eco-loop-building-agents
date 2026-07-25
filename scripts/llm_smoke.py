@@ -1,4 +1,4 @@
-"""Phase 0 smoke test: one chat call to Groq (primary) and Cerebras (fallback), timed.
+"""Phase 0 smoke test: one chat call to each configured provider, timed.
 
 Both providers speak the OpenAI-compatible chat completions API, so a single client
 class handles both -- only base_url/api_key/model change. Run:
@@ -47,14 +47,14 @@ def call(label: str, base_url: str | None, api_key: str | None, model: str) -> N
 
 if __name__ == "__main__":
     call(
-        "Groq (primary)",
+        "Groq",
         "https://api.groq.com/openai/v1",
         os.environ.get("GROQ_API_KEY"),
         os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b"),
     )
     call(
-        "Cerebras (fallback)",
+        "Cerebras (preferred)",
         os.environ.get("FALLBACK_BASE_URL", "https://api.cerebras.ai/v1"),
-        os.environ.get("FALLBACK_API_KEY"),
+        os.environ.get("CEREBRAS_API_KEY") or os.environ.get("FALLBACK_API_KEY"),
         os.environ.get("FALLBACK_MODEL", "gpt-oss-120b"),
     )

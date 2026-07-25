@@ -12,6 +12,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from src.analysis.metrics import summarize  # noqa: E402
 from src.simulation.eplus_path import ENERGYPLUS_DIR  # noqa: E402
 from src.simulation.idf_prep import build_baseline_idf  # noqa: E402
 from src.simulation.runner import EnergyPlusRunner  # noqa: E402
@@ -38,8 +39,18 @@ def main() -> None:
     assert runner.rows[-1]["cumulative_electricity_kwh"] > 0, "total electricity kWh was not > 0"
     assert runner.injections == 0, "baseline run must not actuate anything (controller=None)"
     print("All sanity assertions passed: 168 rows, zone temps in [10,40]C, cumulative kWh > 0, zero injections.")
-    print(f"Total electricity: {runner.rows[-1]['cumulative_electricity_kwh']:.1f} kWh")
-    print(f"Total gas: {runner.rows[-1]['cumulative_gas_kwh']:.1f} kWh")
+
+    # summarize() reads eplusmtr.csv (EnergyPlus's own meter output), not our
+    # python-accumulated cumulative_electricity_kwh column -- see
+    # src/analysis/metrics.py's module docstring.
+    summary = summarize(OUTPUT_DIR)
+    print(
+        f"Baseline: {summary['total_electricity_kwh']:.1f} kWh total "
+        f"({summary['hvac_kwh']:.1f} kWh HVAC, {summary['fixed_load_kwh']:.1f} kWh fixed load), "
+        f"{summary['gas_kwh']:.1f} kWh gas, {summary['comfort_in_band_pct']:.1f}% occupied PMV in-band, "
+        f"{summary['kg_co2']:.1f} kg CO2, cost {summary['cost']:.2f}, "
+        f"peak demand {summary['peak_demand_kw']:.1f} kW."
+    )
 
 
 if __name__ == "__main__":

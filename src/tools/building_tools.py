@@ -6,16 +6,38 @@ compliance + demo.
 Pure functions, no pyenergyplus import -- testable standalone and safe to import
 from the MCP server process, which never touches a live E+ simulation.
 """
+import datetime
 import functools
 import json
 import os
 import re
 from typing import Optional
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 ROOT_DIR = os.path.join(os.path.dirname(__file__), "..", "..")
 CARBON_CSV = os.path.join(ROOT_DIR, "data", "carbon_intensity.csv")
 DECISION_LOG = os.path.join(ROOT_DIR, "results", "decision_log.jsonl")
 PENDING_SETPOINTS_PATH = os.path.join(ROOT_DIR, "results", "pending_setpoints.json")
+
+# Outdoor-temp lookahead: EnergyPlus's Python API only exposes the *current*
+# timestep's value, never a future one (same limitation noted for occupancy
+# above), so pre-cooling decisions need an independent read of the weather
+# file. Deliberately NOT routed through src/simulation/eplus_path.py -- that
+# module raises if ENERGYPLUS_DIR/pyenergyplus aren't importable, which would
+# force a live-E+-capable environment onto the MCP server process too (its own
+# docstring: "never touches a live E+ simulation"). Read the env var directly
+# instead and degrade to no-forecast (None) rather than crash if it's unset.
+_ENERGYPLUS_DIR = os.environ.get("ENERGYPLUS_DIR", "").strip()
+EPW_PATH = (
+    os.path.join(_ENERGYPLUS_DIR, "WeatherData", "USA_IL_Chicago-OHare.Intl.AP.725300_TMY3.epw")
+    if _ENERGYPLUS_DIR
+    else None
+)
+_EPW_HEADER_LINES = 8
+_EPW_REFERENCE_YEAR = 2026  # non-leap, matches src/mcp_server/server.py's day_of_week approximation
 
 ZONES = ["SPACE1-1", "SPACE2-1", "SPACE3-1", "SPACE4-1", "SPACE5-1"]
 
@@ -33,14 +55,45 @@ OCCUPIED_END_HOUR = 19
 WEEKEND_DAYS = {1, 7}  # Sunday, Saturday
 
 
-def _is_occupied_hour(hour: int, day_of_week: int) -> bool:
+def is_occupied_hour(hour: int, day_of_week: int) -> bool:
     if day_of_week in WEEKEND_DAYS:
         return False
     return OCCUPIED_START_HOUR <= hour < OCCUPIED_END_HOUR
 
 
 @functools.lru_cache(maxsize=1)
-def _load_carbon_profile() -> list[dict]:
+def _load_outdoor_temp_forecast() -> dict:
+    """{(day_of_year, hour): drybulb_temp_c}, parsed once from the EPW file.
+    Empty dict (not an error) if EPW_PATH is unset or unreadable -- callers
+    treat a lookup miss as "forecast unavailable", not a failure.
+
+    EPW hour is 1-24 (hour-ending, e.g. hour=1 covers 00:00-01:00); this
+    runner's hour is 0-23 (see runner.py's row schema), so epw_hour - 1 is the
+    matching key. Year is ignored -- TMY3 files splice different historical
+    years per month, but day_of_year here is purely month/day math, matching
+    how the IDF's RunPeriod has no "Begin Year" (see mcp_server/server.py)."""
+    if not EPW_PATH or not os.path.exists(EPW_PATH):
+        return {}
+
+    lookup = {}
+    with open(EPW_PATH, encoding="latin-1") as f:
+        for _ in range(_EPW_HEADER_LINES):
+            next(f, None)
+        for line in f:
+            fields = line.split(",")
+            if len(fields) < 7:
+                continue
+            month, day, epw_hour = int(fields[1]), int(fields[2]), int(fields[3])
+            drybulb_c = float(fields[6])
+            day_of_year = (
+                datetime.date(_EPW_REFERENCE_YEAR, month, day) - datetime.date(_EPW_REFERENCE_YEAR, 1, 1)
+            ).days + 1
+            lookup[(day_of_year, epw_hour - 1)] = drybulb_c
+    return lookup
+
+
+@functools.lru_cache(maxsize=1)
+def load_carbon_profile() -> list[dict]:
     """24 hourly rows of {hour, carbon_gco2_per_kwh, tariff_per_kwh}, loaded once."""
     import csv
 
@@ -66,6 +119,10 @@ def get_building_state(row: Optional[dict]) -> dict:
     zone_pmvs = {z: float(row[f"{z}_pmv"]) for z in ZONES}
     worst_zone = max(zone_pmvs, key=lambda z: abs(zone_pmvs[z]))
 
+    # hvac_kwh_this_hour falls back to the total for state.csv rows written before
+    # the Phase 4 metering fix added the split (older results/raw/*/state.csv).
+    hvac_kwh = row.get("hvac_kwh_this_hour", row["electricity_kwh_this_hour"])
+
     return {
         "available": True,
         "day_of_year": int(row["day_of_year"]),
@@ -79,41 +136,58 @@ def get_building_state(row: Optional[dict]) -> dict:
         "worst_pmv": round(zone_pmvs[worst_zone], 2),
         "current_heating_setpoint_c": round(float(row["heating_setpoint_c"]), 1),
         "current_cooling_setpoint_c": round(float(row["cooling_setpoint_c"]), 1),
+        "fan_available": bool(float(row.get("fan_available", 1.0))),
+        # Total electricity is mostly lighting/plug load this agent can't touch
+        # (~62% of facility total, see docs/ARCHITECTURE.md) -- hvac_kwh_this_hour
+        # is the number that actually reflects setpoint/fan decisions.
         "electricity_kwh_this_hour": round(float(row["electricity_kwh_this_hour"]), 2),
+        "hvac_kwh_this_hour": round(float(hvac_kwh), 2),
     }
 
 
 def get_forecast_context(day_of_year: int, hour: int, day_of_week: int, horizon: int = 6) -> dict:
-    """Next `horizon` hours of occupancy + grid carbon/tariff, so the LLM can
-    pre-cool/pre-heat ahead of occupancy and shift load into cheap, clean windows --
-    the lever the reactive rule-based fallback structurally can't have."""
-    profile = _load_carbon_profile()
+    """Next `horizon` hours of occupancy + grid carbon/tariff + outdoor temp, so
+    the LLM can pre-cool/pre-heat ahead of occupancy and shift load into cheap,
+    clean windows -- the lever the reactive rule-based fallback structurally
+    can't have. outdoor_temp_c comes from the EPW weather file (see
+    _load_outdoor_temp_forecast) and is None for an hour if that file isn't
+    reachable -- callers must handle a missing forecast, not assume one.
+    cheapest/dirtiest rank by carbon, cheapest/priciest_tariff by cost --
+    tracked separately since they don't always agree (see docs/ARCHITECTURE.md)."""
+    profile = load_carbon_profile()
+    outdoor_forecast = _load_outdoor_temp_forecast()
     hours_ahead = []
     for i in range(1, horizon + 1):
         future_hour = (hour + i) % 24
+        future_day_of_year = day_of_year + (hour + i) // 24
         future_dow = day_of_week if hour + i < 24 else (day_of_week % 7) + 1
         carbon_row = profile[future_hour]
         hours_ahead.append(
             {
                 "hour": future_hour,
-                "occupied": _is_occupied_hour(future_hour, future_dow),
+                "occupied": is_occupied_hour(future_hour, future_dow),
                 "carbon_gco2_per_kwh": carbon_row["carbon_gco2_per_kwh"],
                 "tariff_per_kwh": carbon_row["tariff_per_kwh"],
+                "outdoor_temp_c": outdoor_forecast.get((future_day_of_year, future_hour)),
             }
         )
 
     occupied_flags = [h["occupied"] for h in hours_ahead]
     hours_until_occupancy = next((i + 1 for i, o in enumerate(occupied_flags) if o), None)
     hours_until_vacancy = next((i + 1 for i, o in enumerate(occupied_flags) if not o), None)
-    cheapest = min(hours_ahead, key=lambda h: h["carbon_gco2_per_kwh"])
-    dirtiest = max(hours_ahead, key=lambda h: h["carbon_gco2_per_kwh"])
+    cheapest_carbon = min(hours_ahead, key=lambda h: h["carbon_gco2_per_kwh"])
+    dirtiest_carbon = max(hours_ahead, key=lambda h: h["carbon_gco2_per_kwh"])
+    cheapest_tariff = min(hours_ahead, key=lambda h: h["tariff_per_kwh"])
+    priciest_tariff = max(hours_ahead, key=lambda h: h["tariff_per_kwh"])
 
     return {
         "hours_ahead": hours_ahead,
         "hours_until_occupancy": hours_until_occupancy,
         "hours_until_vacancy": hours_until_vacancy,
-        "cheapest_hour": cheapest["hour"],
-        "dirtiest_hour": dirtiest["hour"],
+        "cheapest_hour": cheapest_carbon["hour"],
+        "dirtiest_hour": dirtiest_carbon["hour"],
+        "cheapest_tariff_hour": cheapest_tariff["hour"],
+        "priciest_tariff_hour": priciest_tariff["hour"],
     }
 
 
@@ -155,19 +229,35 @@ def inject_setpoints(
 
 _SEVERITY_RE = re.compile(r"\*\*\s*(Severe|Warning)\s*\*\*", re.IGNORECASE)
 
+# Each error line is truncated before it reaches the prompt. These strings get
+# fed straight back to the LLM by safety.py, and a provider 429 body is huge
+# (~250 chars of JSON: org id, tier, exact token counts, upsell copy). Sending
+# 5 of them verbatim added ~620 tokens/call -- a 31% prompt inflation that only
+# kicks in *once failures start*, i.e. exactly when the token budget is already
+# the thing failing. That's a feedback loop: throttled -> fatter prompts ->
+# more throttled. The LLM only needs the gist ("rate limited", "invalid JSON"),
+# never the org id or the retry-after decimals, so cap it.
+MAX_ERROR_CHARS = 160
+
 
 def get_recent_errors(run_dir: Optional[str] = None, n: int = 5) -> list[str]:
     """Tails the E+ .err file for Severe/Warning lines and the last N failed
     decisions from the decision log -- the spec's "parse files, extract runtime
-    errors" requirement made concrete."""
+    errors" requirement made concrete. Each line is truncated to
+    MAX_ERROR_CHARS so a burst of verbose provider errors can't inflate the
+    prompt (see that constant's comment)."""
     errors: list[str] = []
+
+    def _clip(text: str) -> str:
+        text = " ".join(text.split())  # collapse newlines/runs of whitespace
+        return text if len(text) <= MAX_ERROR_CHARS else text[: MAX_ERROR_CHARS - 3] + "..."
 
     if run_dir:
         err_path = os.path.join(run_dir, "eplusout.err")
         if os.path.exists(err_path):
             with open(err_path, errors="ignore") as f:
                 lines = [line.strip() for line in f if _SEVERITY_RE.search(line)]
-            errors.extend(lines[-n:])
+            errors.extend(_clip(line) for line in lines[-n:])
 
     if os.path.exists(DECISION_LOG):
         with open(DECISION_LOG) as f:
@@ -175,8 +265,10 @@ def get_recent_errors(run_dir: Optional[str] = None, n: int = 5) -> list[str]:
         failed = [entry for entry in log_lines if entry.get("fallback_used")]
         for entry in failed[-n:]:
             errors.append(
-                f"day {entry.get('day_of_year')} hour {entry.get('hour')}: "
-                f"fallback used -- {entry.get('error', 'unknown error')}"
+                _clip(
+                    f"day {entry.get('day_of_year')} hour {entry.get('hour')}: "
+                    f"fallback used -- {entry.get('error', 'unknown error')}"
+                )
             )
 
     return errors[-n:]
@@ -188,6 +280,16 @@ def demo() -> None:
     assert forecast["hours_until_occupancy"] == 2, forecast
     assert len(forecast["hours_ahead"]) == 6
     assert forecast["cheapest_hour"] != forecast["dirtiest_hour"]
+    assert "cheapest_tariff_hour" in forecast and "priciest_tariff_hour" in forecast
+    # outdoor_temp_c is None if EPW_PATH is unreachable, a float otherwise -- either
+    # is valid, but the key must always be present so callers never KeyError.
+    assert all("outdoor_temp_c" in h for h in forecast["hours_ahead"])
+
+    # Horizon crossing midnight: day_of_year must roll over for the EPW lookup key
+    # (only exercised indirectly here -- a wrong day_of_year would just silently
+    # miss the lookup and return None, so this mainly guards against a crash).
+    rollover_forecast = get_forecast_context(day_of_year=200, hour=22, day_of_week=3, horizon=4)
+    assert len(rollover_forecast["hours_ahead"]) == 4
 
     weekend_forecast = get_forecast_context(day_of_year=201, hour=6, day_of_week=1, horizon=6)
     assert all(not h["occupied"] for h in weekend_forecast["hours_ahead"]), weekend_forecast
@@ -196,18 +298,29 @@ def demo() -> None:
     sample_row = {
         "day_of_year": 200, "hour": 9, "outdoor_temp_c": 28.5, "occupancy_frac": 1.0,
         "heating_setpoint_c": 21.0, "cooling_setpoint_c": 24.5, "electricity_kwh_this_hour": 5.2,
+        "hvac_kwh_this_hour": 4.0, "fan_available": 1.0,
         **{f"{z}_temp_c": 23.0 for z in ZONES}, **{f"{z}_pmv": 0.1 for z in ZONES},
     }
     sample_row["SPACE3-1_pmv"] = -0.9  # worst |PMV|
     state = get_building_state(sample_row)
     assert state["worst_pmv_zone"] == "SPACE3-1"
     assert state["worst_pmv"] == -0.9
+    assert state["hvac_kwh_this_hour"] == 4.0
+    assert state["fan_available"] is True
+
+    # hvac_kwh_this_hour falls back to the total for pre-Phase-4 rows that lack it.
+    old_row = {k: v for k, v in sample_row.items() if k != "hvac_kwh_this_hour"}
+    assert get_building_state(old_row)["hvac_kwh_this_hour"] == 5.2
 
     result = inject_setpoints(10.0, 40.0, occupied=True)
     assert result["was_clamped"] is True
     assert result["heating_c"] == 18.0 and result["cooling_c"] == 28.0
 
-    assert get_recent_errors(run_dir=None, n=5) == [] or isinstance(get_recent_errors(n=5), list)
+    errs = get_recent_errors(n=5)
+    assert isinstance(errs, list) and len(errs) <= 5
+    # Every line must be capped -- this is what stops a burst of verbose provider
+    # 429 bodies from inflating the very prompts that are already being throttled.
+    assert all(len(e) <= MAX_ERROR_CHARS for e in errs), [len(e) for e in errs]
 
     print("building_tools.py: all assertions passed.")
 

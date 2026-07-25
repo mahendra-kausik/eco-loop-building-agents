@@ -27,11 +27,17 @@ OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "..", "results", "raw", "pr
 STEP_DAY_OF_YEAR = 196 + 2  # Jul 15 = day-of-year 196 in a non-leap year; day 3 = 198
 
 
-def step_controller(row):
+def step_controller(row, day_of_year=196, hour=0, day_of_week=0):
+    # Stale since Phase 3 widened runner.Controller to 4 args -- row["day_of_year"]
+    # happened to still work because runner.py always passes the last completed
+    # row as the first positional arg, but the extra 3 params were silently
+    # dropped until now (this function only declared `row`, so any call with more
+    # than one positional arg would TypeError -- fixed while touching this file
+    # for the fan-actuator signature change).
     day = row["day_of_year"] if row else 196
     if day < STEP_DAY_OF_YEAR:
-        return 21.0, 23.9
-    return 21.0, 28.0
+        return 21.0, 23.9, 1.0
+    return 21.0, 28.0, 1.0  # fan stays on throughout -- this proof is about setpoints, not fan
 
 
 def main() -> None:

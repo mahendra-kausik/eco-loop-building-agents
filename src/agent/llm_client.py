@@ -1,5 +1,14 @@
-"""OpenAI-compatible client for Groq (primary) / Cerebras (fallback), per
-CLAUDE.md: FALLBACK_API_KEY may be blank, in which case only Groq is tried.
+"""OpenAI-compatible client for Cerebras (preferred) / Groq, round-robined per
+call. Either key may be blank; with both blank, complete() raises
+LLMUnavailable and the safety supervisor falls straight through to the
+rule-based schedule -- so the project still runs on Groq alone, per CLAUDE.md.
+
+Provider ordering changed in Phase 4 (user-approved 2026-07-25). CLAUDE.md
+originally locked "Groq primary, Cerebras fallback" on the assumption Groq had
+the better free tier; measuring the published gpt-oss-120b quotas showed the
+opposite on the limit that actually binds here -- Cerebras carries 1M tokens/day
+against Groq's 200K, i.e. ~2.7 full 7-day runs/day vs ~0.5. See
+_PROVIDER_MIN_INTERVAL below and docs/ARCHITECTURE.md's "Rate limiting" section.
 
 The watchdog is the client's own request timeout (no threads/signals needed) --
 LLM_TIMEOUT_SECONDS from .env, default 15s, matching CLAUDE.md's ~15s figure.
@@ -21,21 +30,62 @@ MAX_TOKENS = 1000
 
 # EnergyPlus steps through simulated hours far faster than real time, so 168
 # hourly decisions can fire within seconds of each other -- straight into free-
-# tier RPM caps (observed: Groq 429 "Requests per minute limit exceeded" during
-# a 2-day test run). This is a real-time floor between calls to the SAME
-# provider, not a decision-cadence change (that stays hourly-simulated per
-# CLAUDE.md). Default keeps well under a 30 RPM tier.
-# ponytail: single global interval, not a true token-bucket / per-provider RPM
-# config -- fine for one building's hourly cadence; revisit if providers expose
-# different limits worth tuning independently.
-MIN_CALL_INTERVAL_SECONDS = float(os.environ.get("LLM_MIN_CALL_INTERVAL_SECONDS", "2.5"))
+# tier caps. This is a real-time floor between calls to the SAME provider, not
+# a decision-cadence change (that stays hourly-simulated per CLAUDE.md).
+#
+# Phase 4 correction: the original 2.5s default was sized for a requests-per-
+# minute cap ("30 RPM tier"). A live run's 429s turned out to be a *tokens*-
+# per-minute cap instead -- Groq's error body reads "tokens per minute (TPM):
+# Limit 8000" for this model/org, and our requested budget (prompt + MAX_TOKENS
+# reservation) runs ~2200-2700 tokens/call. 8000 / ~2500 ~= 3.2 calls/min
+# sustainable -> ~19s between calls, not 2.5s. Raised the default accordingly;
+# 2.5s was silently guaranteeing most calls would 429 once a TPM window filled.
+# The two providers are bound by *different* limits, so one global interval
+# necessarily over-throttles whichever is less constrained. Measured against
+# each provider's published free-tier quota for gpt-oss-120b at this project's
+# ~2.2K tokens/call:
+#
+#   groq      30 RPM (2.0s) |  8K TPM (16.5s)  -> TPM-bound, ~17s
+#   cerebras   5 RPM (12.0s)| 30K TPM ( 4.4s)  -> RPM-bound, ~12s
+#
+# Note they invert: Groq has 6x the request headroom but a quarter of the token
+# headroom. Daily budgets differ even more (Groq 200K TPD ~= 0.5 full 7-day
+# runs; Cerebras 1M TPD ~= 2.7), which is why round-robin leans on Cerebras in
+# practice. See docs/ARCHITECTURE.md's "Rate limiting" section.
+# ponytail: static per-provider floors, not a real token-bucket tracking actual
+# usage -- fine while the prompt size is stable; a bucket only earns its keep if
+# per-call token cost starts varying a lot.
+_PROVIDER_MIN_INTERVAL = {"groq": 17.0, "cerebras": 12.0}
+_DEFAULT_MIN_INTERVAL = 19.0  # unknown/self-hosted provider: assume the tightest
+
+# Explicit override wins for every provider (set it for a paid tier with more
+# headroom, or to force a uniform conservative floor). Unset -> per-provider.
+_INTERVAL_OVERRIDE = os.environ.get("LLM_MIN_CALL_INTERVAL_SECONDS", "").strip()
+MIN_CALL_INTERVAL_SECONDS = float(_INTERVAL_OVERRIDE) if _INTERVAL_OVERRIDE else None
 _last_call_time: dict[str, float] = {}
+
+
+def _min_interval(provider_name: str) -> float:
+    if MIN_CALL_INTERVAL_SECONDS is not None:
+        return MIN_CALL_INTERVAL_SECONDS
+    return _PROVIDER_MIN_INTERVAL.get(provider_name, _DEFAULT_MIN_INTERVAL)
+
+# Phase 4 (user decision, 2026-07-25): round-robin the starting provider each call
+# instead of always trying Groq first and treating Cerebras as pure failover. A
+# live 7-day run showed 95/168 decisions (57%) hitting Groq's free-tier RPM cap
+# and falling back to the rule-based controller -- the LLM was only actually
+# deciding 43% of the time. Alternating roughly doubles effective throughput at
+# the same per-provider MIN_CALL_INTERVAL_SECONDS. Still fails over to the other
+# configured provider within the same call if the rotated-to one errors, and
+# still reduces to Groq-only rotation (a no-op) when FALLBACK_API_KEY is blank --
+# CLAUDE.md's "works fully on Groq alone" guarantee is unchanged.
+_rr_index = 0
 
 
 def _throttle(provider_name: str) -> None:
     last = _last_call_time.get(provider_name)
     if last is not None:
-        wait = MIN_CALL_INTERVAL_SECONDS - (time.perf_counter() - last)
+        wait = _min_interval(provider_name) - (time.perf_counter() - last)
         if wait > 0:
             time.sleep(wait)
     _last_call_time[provider_name] = time.perf_counter()
@@ -54,7 +104,27 @@ class Provider:
 
 
 def _load_providers() -> list[Provider]:
+    """Cerebras first (5x Groq's daily token budget -- see module docstring).
+    Order matters only as the round-robin starting point and the within-call
+    failover order; either provider alone is a complete configuration.
+
+    CEREBRAS_API_KEY is the preferred name now that this provider is no longer
+    the "fallback"; FALLBACK_API_KEY is still honored so existing .env files
+    (and CLAUDE.md's original wording) keep working unchanged."""
     providers = []
+    cerebras_key = (
+        os.environ.get("CEREBRAS_API_KEY", "").strip()
+        or os.environ.get("FALLBACK_API_KEY", "").strip()
+    )
+    if cerebras_key:
+        providers.append(
+            Provider(
+                name="cerebras",
+                base_url=os.environ.get("FALLBACK_BASE_URL", "https://api.cerebras.ai/v1"),
+                api_key=cerebras_key,
+                model=os.environ.get("FALLBACK_MODEL", "gpt-oss-120b"),
+            )
+        )
     groq_key = os.environ.get("GROQ_API_KEY", "").strip()
     if groq_key:
         providers.append(
@@ -63,16 +133,6 @@ def _load_providers() -> list[Provider]:
                 base_url="https://api.groq.com/openai/v1",
                 api_key=groq_key,
                 model=os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b"),
-            )
-        )
-    fallback_key = os.environ.get("FALLBACK_API_KEY", "").strip()
-    if fallback_key:
-        providers.append(
-            Provider(
-                name="cerebras",
-                base_url=os.environ.get("FALLBACK_BASE_URL", "https://api.cerebras.ai/v1"),
-                api_key=fallback_key,
-                model=os.environ.get("FALLBACK_MODEL", "gpt-oss-120b"),
             )
         )
     return providers
@@ -87,8 +147,13 @@ def complete(messages: list[dict], timeout: float = TIMEOUT_SECONDS) -> tuple[st
     if not providers:
         raise LLMUnavailable("no LLM provider configured (GROQ_API_KEY and FALLBACK_API_KEY both blank)")
 
+    global _rr_index
+    rotate = _rr_index % len(providers)
+    ordered_providers = providers[rotate:] + providers[:rotate]
+    _rr_index += 1
+
     last_error: Exception | None = None
-    for provider in providers:
+    for provider in ordered_providers:
         _throttle(provider.name)
         client = OpenAI(api_key=provider.api_key, base_url=provider.base_url, timeout=timeout, max_retries=0)
         start = time.perf_counter()

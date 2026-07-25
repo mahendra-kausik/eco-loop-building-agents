@@ -9,14 +9,36 @@ Submission for the Honeywell hackathon, Problem 1 (Eco-Loop Building Agents).
 
 ## Headline results
 
-| Metric | Baseline (fixed schedule) | AI closed loop | Delta |
-|---|---|---|---|
-| Total facility electricity (kWh) | _TBD_ | _TBD_ | **_TBD_ %** |
-| Occupied hours with PMV in [-0.5, +0.5] | _TBD_ | _TBD_ | _TBD_ |
-| CO2 (kg, grid-intensity weighted) | _TBD_ | _TBD_ | _TBD_ |
-| Simulated days completed without a crash | — | _TBD_ | — |
+7 simulated days, Chicago July, identical weather/building for both runs. All
+energy figures from EnergyPlus's own meter output (`eplusmtr.csv`), not a
+self-reported total — see `docs/ARCHITECTURE.md`'s metering-correction note.
 
-Dashboard: `results/dashboard.html` · Demo video: _link TBD_
+| Metric | Baseline | LLM + supervisor | Rule-based floor (no LLM) |
+|---|---|---|---|
+| Total facility electricity (kWh) | 1100.0 | **1012.8** (+7.9%) | 1018.3 (+7.4%) |
+| HVAC-only electricity (kWh) | 413.6 | **326.4** (+21.1%) | 331.9 (+19.8%) |
+| Occupied hours with PMV in [-0.5, +0.5] | 80.7% | 86.2% (+5.5 pts) | **92.0%** (+11.3 pts) |
+| Reheat gas (kWh) | 32.9 | 3.2 | **0.0** |
+| CO2 (kg, grid-intensity weighted) | 663.8 | 612.4 | 610.3 |
+| Simulated days without a crash | — | 14+ (2x standard horizon) | 14+ |
+
+Both configurations beat baseline on energy **and** comfort at the same time —
+the savings aren't taken out of occupants' comfort.
+
+Two caveats we'd rather state than bury:
+
+- **~62% of facility electricity is lighting/plug load** that no setpoint or fan
+  decision can touch. That's why HVAC-only % is the honest measure of what
+  supervisory control actually moves, and why we report both numbers.
+- **The LLM edges the deterministic floor on energy but trails it on comfort**
+  (+1.3 pts HVAC, −5.8 pts comfort). Weighted against the evaluation criteria
+  that trade is about neutral, so the rule-based floor is currently the better
+  all-round controller — and since the supervisor falls back to exactly that
+  floor on any LLM failure, the system's worst case is its strongest
+  configuration. Closing the gap is a prompt/guard change, not an architectural
+  one ([`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)).
+
+Dashboard: `results/dashboard.html` (Phase 5) · Demo video: _link TBD_
 
 ## Architecture
 
@@ -28,7 +50,7 @@ EnergyPlus (pyenergyplus runtime callback)
         │         propose_setpoints / inject_setpoints / get_recent_errors
         │              └── also exposed over MCP (src/mcp_server/)
         ▼
-   LLM agent (gpt-oss-120b, Groq primary / Cerebras fallback)
+   LLM agent (gpt-oss-120b, Cerebras + Groq round-robin)
         │  strict-JSON setpoint decision, once per simulated hour
         ▼
    Safety supervisor  ── schema validation → clamp to safe ranges →
@@ -78,8 +100,12 @@ Then edit `.env` and set at minimum:
 
 - `ENERGYPLUS_DIR` — your EnergyPlus install folder, e.g. `C:\EnergyPlusV26-1-0`
 - `GROQ_API_KEY` — free key from [console.groq.com](https://console.groq.com)
-- `FALLBACK_API_KEY` — optional; free key from [cloud.cerebras.ai](https://cloud.cerebras.ai).
-  Leave blank to run on Groq alone (the rule-based fallback still protects the loop).
+- `CEREBRAS_API_KEY` — free key from [cloud.cerebras.ai](https://cloud.cerebras.ai). Preferred
+  provider: 1M tokens/day vs Groq's 200K on the same model. (`FALLBACK_API_KEY` is still
+  accepted as a legacy alias.)
+
+Either key may be left blank — the loop round-robins whichever providers are configured, and
+with both blank it runs entirely on the rule-based controller without erroring.
 
 > `pyenergyplus` is **not** a pip package — it ships inside the EnergyPlus installation and
 > is loaded at runtime from `ENERGYPLUS_DIR`. Nothing to install for it.

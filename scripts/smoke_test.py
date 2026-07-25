@@ -12,6 +12,7 @@ touches models/baseline.idf, which is a deliverable.
 
 Run: python scripts/smoke_test.py
 """
+import csv
 import os
 import sys
 
@@ -42,21 +43,45 @@ def main() -> None:
     assert runner.controller_errors == [], f"controller raised errors: {runner.controller_errors}"
     assert runner.injections > 0, "expected at least one setpoint injection"
 
-    # The controller for row[i]'s setpoints runs *before* hour i starts, seeing only
-    # row[i-1] (row[0]'s decision saw no row at all -> occupied=False). So the clamp
-    # range to check row[i] against is keyed off row[i-1]'s occupancy, not row[i]'s own.
-    prior_occupied = False
+    # Phase 4: the controller now predicts occupancy for the hour it's deciding FOR
+    # (fallback.is_occupied_hour(hour, day_of_week)) instead of reading the last
+    # completed row reactively, so row[i]'s setpoints are checked against row[i]'s
+    # own occupancy_frac directly -- no more one-hour lag bookkeeping. is_occupied_hour
+    # is built to mirror OCCUPY-1 exactly (occupancy_frac > 0 for hours 8-18 weekdays),
+    # confirmed against the IDF's schedule fractions.
     for row in runner.rows:
         h, c = row["heating_setpoint_c"], row["cooling_setpoint_c"]
-        lo_h, hi_h = fallback.OCCUPIED_HEATING_RANGE if prior_occupied else fallback.UNOCCUPIED_HEATING_RANGE
-        lo_c, hi_c = fallback.OCCUPIED_COOLING_RANGE if prior_occupied else fallback.UNOCCUPIED_COOLING_RANGE
+        occupied = row["occupancy_frac"] > 0
+        lo_h, hi_h = fallback.OCCUPIED_HEATING_RANGE if occupied else fallback.UNOCCUPIED_HEATING_RANGE
+        lo_c, hi_c = fallback.OCCUPIED_COOLING_RANGE if occupied else fallback.UNOCCUPIED_COOLING_RANGE
         assert lo_h <= h <= hi_h, f"heating {h} outside clamp {lo_h}-{hi_h} at day {row['day_of_year']} hr {row['hour']}"
         assert lo_c <= c <= hi_c, f"cooling {c} outside clamp {lo_c}-{hi_c} at day {row['day_of_year']} hr {row['hour']}"
         assert h <= c - fallback.MIN_DEADBAND_C, f"deadband violated: h={h} c={c}"
-        prior_occupied = row["occupancy_frac"] > 0
+        fan = row["fan_available"]
+        assert fan in (0.0, 1.0), f"fan_available {fan} not a legal 0/1 value at day {row['day_of_year']} hr {row['hour']}"
+        if occupied:
+            assert fan == 1.0, f"fan off during an occupied hour: day {row['day_of_year']} hr {row['hour']}"
+
+    # Regression check for the Phase 4 metering bug: python-accumulated electricity
+    # must reconcile against EnergyPlus's own eplusmtr.csv within 0.5%, or the
+    # runner is mis-binning energy into the wrong hour again (see runner.py's
+    # module docstring "CORRECTION" note).
+    mtr_path = os.path.join(OUTPUT_DIR, "eplusmtr.csv")
+    with open(mtr_path, newline="") as f:
+        reader = csv.reader(f)
+        header = next(reader)
+        cols = [header.index(f"Electricity:{m} [J](Hourly)") for m in ("Building", "HVAC", "Plant")]
+        meter_kwh = sum(sum(float(row[i]) for i in cols) for row in reader) / 3.6e6
+    python_kwh = runner.rows[-1]["cumulative_electricity_kwh"]
+    pct_off = abs(python_kwh - meter_kwh) / meter_kwh * 100
+    assert pct_off < 0.5, (
+        f"python-accumulated electricity ({python_kwh:.2f} kWh) diverges from "
+        f"eplusmtr.csv ({meter_kwh:.2f} kWh) by {pct_off:.2f}% -- metering regression"
+    )
 
     print(f"smoke_test.py passed: exit={exit_code}, rows={len(runner.rows)}, "
-          f"injections={runner.injections}, controller_errors=0, all setpoints in clamp.")
+          f"injections={runner.injections}, controller_errors=0, all setpoints in clamp, "
+          f"kWh reconciled with eplusmtr.csv ({pct_off:.2f}% off).")
 
 
 if __name__ == "__main__":
