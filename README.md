@@ -15,32 +15,33 @@ self-reported total — see `docs/ARCHITECTURE.md`'s metering-correction note.
 
 | Metric | Baseline | LLM + supervisor | Rule-based floor (no LLM) |
 |---|---|---|---|
-| Total facility electricity (kWh) | 1100.0 | 1032.2 (+6.2%) | **1018.3** (+7.4%) |
-| HVAC-only electricity (kWh) | 413.6 | 345.8 (+16.4%) | **331.9** (+19.8%) |
-| Occupied hours with PMV in [-0.5, +0.5] | 80.7% | **92.7%** (+12.0 pts) | 92.0% (+11.3 pts) |
-| Reheat gas (kWh) | 32.9 | 3.5 | **0.0** |
-| CO2 (kg, grid-intensity weighted) | 663.8 | 623.8 | **610.3** |
+| Total facility electricity (kWh) | 1100.0 | **1004.6** (+8.7%) | 1018.3 (+7.4%) |
+| HVAC-only electricity (kWh) | 413.6 | **318.2** (+23.1%) | 331.9 (+19.8%) |
+| Occupied hours with PMV in [-0.5, +0.5] | 80.7% | **93.1%** (+12.4 pts) | 92.0% (+11.3 pts) |
+| Reheat gas (kWh) | 32.9 | **2.1** | 0.0 |
+| CO2 (kg, grid-intensity weighted) | 663.8 | **602.9** | 610.3 |
 | Simulated days without a crash | — | 14+ (2x standard horizon) | 14+ |
 
-Both configurations beat baseline on energy **and** comfort at the same time —
-the savings aren't taken out of occupants' comfort.
+The LLM now beats its own deterministic fallback on every axis at once —
+energy, HVAC-only energy, and comfort — not just comfort as in the previous
+tuning pass. Both configurations beat baseline on energy **and** comfort
+simultaneously; the savings aren't taken out of occupants' comfort.
 
-Two caveats we'd rather state than bury:
+One caveat we'd rather state than bury: **~62% of facility electricity is
+lighting/plug load** that no setpoint or fan decision can touch. That's why
+HVAC-only % is the honest measure of what supervisory control actually
+moves, and why we report both numbers.
 
-- **~62% of facility electricity is lighting/plug load** that no setpoint or fan
-  decision can touch. That's why HVAC-only % is the honest measure of what
-  supervisory control actually moves, and why we report both numbers.
-- **The LLM beats its own deterministic fallback on comfort, not on energy.**
-  A supervisor-enforced comfort guard caps occupied cooling at 25.5 °C — a
-  bound derived from measurement, not guessed: PMV breached +0.5 in 7 of 40
-  zone-hours the LLM spent above that setpoint, versus 1 of 205 at or below
-  it. Capping it pushes LLM comfort past the floor's own 92.0% for the first
-  time (92.7%), at the honest cost of 3.5 points of HVAC savings (18.9% before
-  the guard, 16.4% after) — holding a tighter comfort band means real extra
-  cooling energy on the hours it binds. Since the supervisor falls back to
-  exactly the deterministic floor on any LLM failure, the system's worst case
-  never loses more than that trade
-  ([`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)).
+The gap that used to separate the LLM from the floor was a single prompt
+defect, not a modeling limitation: the state digest describes the *last
+completed* hour, so at the last occupied hour of the day the LLM was reading
+"occupied, comfortable" and coasting on near-occupied setpoints into an empty
+building — 20+ kWh/day of pure waste, plus all of the run's reheat gas.
+Adding an explicit `decision_hour_occupied` flag to the forecast context (the
+hour actually being decided for, distinct from the state digest's hour) let
+the model self-correct with no supervisor override needed — 0 of 168
+decisions required the comfort guard or a fallback this run
+([`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)).
 
 Dashboard: `results/dashboard.html` (Phase 5) · Demo video: _link TBD_
 

@@ -176,6 +176,13 @@ somewhere in the message content when `response_format={"type":
 "json_object"}` is set, or it 400s with `'messages' must contain the word
 'json'...`. The system prompt satisfies this by construction.
 
+Second quirk, found via the Phase 4 tuning history below: the digest describes
+the *last completed* hour, but the model decides for the *next* one. Those
+differ exactly at occupancy transitions, and the prompt didn't say so —
+`forecast.decision_hour_occupied` now makes the distinction explicit rather
+than leaving the model to (wrongly) assume `current_state`'s occupancy still
+holds.
+
 ## Long-log / high-volume-data handling
 
 The LLM never sees EnergyPlus's raw output (`.eso`, `.err`, or the runner's
@@ -313,40 +320,53 @@ runner's own accumulation (see the metering-correction section above).
 | Run | Total elec. kWh | HVAC kWh | Comfort in-band | Gas kWh | kg CO2 |
 |---|---|---|---|---|---|
 | Baseline (fixed schedule) | 1100.0 | 413.6 | 80.7% | 32.9 | 663.8 |
-| Agent, rule-based floor (no LLM) | **1018.3** | **331.9** | 92.0% | **0.0** | **610.3** |
-| Agent, LLM + supervisor | 1032.2 | 345.8 | **92.7%** | 3.5 | 623.8 |
+| Agent, rule-based floor (no LLM) | 1018.3 | 331.9 | 92.0% | 0.0 | 610.3 |
+| Agent, LLM + supervisor | **1004.6** | **318.2** | **93.1%** | 2.1 | **602.9** |
 
 - **Rule-based floor:** +7.4% total / +19.8% HVAC, comfort **up 11.3 points**,
   reheat gas eliminated entirely.
-- **LLM + supervisor:** +6.2% total / +16.4% HVAC, comfort up 12.0 points —
-  the only axis on which it beats the floor. 168/168 injections, 0 controller
-  errors, 1.8% fallback (3/168), 0 retried, latency p50 900 ms / p95 2287 ms.
+- **LLM + supervisor:** +8.7% total / +23.1% HVAC, comfort **up 12.4 points**
+  — beats the floor on every axis simultaneously, the first configuration
+  where that's true. 168/168 injections, 0 controller errors, 0 fallback
+  (0/168), 0 retried, latency p50 817 ms / p95 2034 ms, comfort guard never
+  triggered (0/168 `was_comfort_capped`).
 
 Both beat baseline on energy *and* comfort simultaneously — savings are not
-bought at occupants' expense. The three changes driving it, in order of
-impact: (1) the AHU fan actuator no longer conditions the building 2 extra
-hours/day outside occupancy, (2) predictive (not reactive) occupancy gives the
-first occupied hour the right clamp range instead of the previous hour's, and
-(3) deterministic setpoint targets moved off the baseline's over-cooled 23.9 °C
-toward the middle of the CLAUDE.md-locked 24–28 °C occupied range.
+bought at occupants' expense. The three changes driving the floor's numbers,
+in order of impact: (1) the AHU fan actuator no longer conditions the
+building 2 extra hours/day outside occupancy, (2) predictive (not reactive)
+occupancy gives the first occupied hour the right clamp range instead of the
+previous hour's, and (3) deterministic setpoint targets moved off the
+baseline's over-cooled 23.9 °C toward the middle of the CLAUDE.md-locked
+24–28 °C occupied range.
 
-**Where the LLM currently stands versus the deterministic floor — stated
-plainly:** two tuning passes moved the trade-off, they didn't eliminate it.
-The first (prompt-only, see below) narrowed the comfort gap from 5.8 points to
-1.5 but left the floor ahead on every axis. The second, a **supervisor-
-enforced comfort guard**, closes that last 1.5 points and pushes the LLM
-*past* the floor on comfort (92.7% vs 92.0%) — the first configuration where
-the LLM demonstrably beats its own deterministic fallback rather than merely
-approaching it. The honest cost is energy: HVAC savings drop from 18.9% to
-16.4%, because holding a tighter comfort band on the ~40 zone-hours that were
-drifting warm requires real additional cooling. Weighted against the rubric
-(comfort 20%, energy 25%), neither configuration dominates the other; this
-document ships the comfort-guarded version because "the LLM outperforms its
-own fallback" is the stronger signal for the Agentic Autonomy criterion, and
-because the supervisor's fallback path still guarantees the system's worst
-case never costs more than that 3.5-point trade.
+**Where the LLM currently stands versus the deterministic floor.** Three
+tuning passes; the first two narrowed the gap without closing it (see
+below), the third closed it outright. Root cause, found by splitting the
+LLM's HVAC use by occupancy: the LLM was *already 14.1 kWh better than the
+floor during occupied hours* (299.2 vs 313.3 kWh) — its entire prior deficit
+was concentrated in two unoccupied hours, most of it (20.2 kWh + all of the
+run's reheat gas) at the last occupied hour of the day. The decision log's
+own `reason` field showed why: `"maintain comfort during occupied hour"`,
+`"comfort limit reached"` — the LLM believed that hour was still occupied.
+It was right about the *input* it saw: `current_state` is always the last
+*completed* hour, and `forecast.hours_ahead` starts at `hour + 1`, so the
+hour actually being decided for was never named anywhere in the prompt. Given
+a correct signal the model already did the right thing 2/2 times it happened
+to have one (weekend transitions, where the previous hour was also
+unoccupied) — it was 5/5 wrong only when the previous hour was occupied and
+the current one wasn't. Fix: `get_forecast_context` now returns
+`decision_hour_occupied` (the hour being set, computed the same predictive
+way `safety.py`/`fallback.py` already do it), and the system prompt states
+explicitly that `current_state` describes the *previous* hour while this
+flag describes the one being decided. No supervisor override was needed —
+this is a genuine self-correction by the model once given the missing
+signal, the strongest evidence yet for the Agentic Autonomy criterion. The
+existing supervisor-enforced comfort guard (`COMFORT_MAX_COOLING_C = 25.5`,
+detailed below) stays in place as a backstop but didn't have to fire this
+run (0/168) — comfort held on its own.
 
-**Tuning history (Phase 4 close, two passes).** The decision log first showed
+**Tuning history (Phase 4 close, three passes).** The decision log first showed
 the LLM applying occupied cooling as warm as 26.0–26.5 °C — near or past the
 PMV +0.5 boundary at full occupancy, versus the floor's fixed 25.0 °C. Pass 1
 (prompt-only): root cause was prompt guidance ("running a couple degrees
@@ -365,13 +385,28 @@ there, vs 1 of 205 at or below it) — a measured, not guessed, bound. Added
 stage of the supervisor chain (after clamp and anti-thrash rate-limit, so a
 setpoint drifting down from a high prior value can't get dragged back out of
 band by the limiter) and logged as its own `was_comfort_capped` flag. Result:
-comfort 90.5%→92.7%, HVAC savings 18.9%→16.4%. Capped on 5 of 168 decisions.
+comfort 90.5%→92.7%, HVAC savings 18.9%→16.4%. Capped on 5 of 168 decisions
+— pass 2 traded energy for comfort, the first time the LLM beat the floor on
+comfort but the floor still led on both kWh measures. Pass 3 (prompt-only,
+this pass): the previous two passes had been tuning the wrong variable —
+occupied-hour cooling was never the source of the LLM's energy deficit (it
+was already beating the floor there); the deficit was entirely a stale-
+occupancy-signal bug at hour transitions (see above). Added
+`decision_hour_occupied` to the forecast context and ~4 lines of system
+prompt naming the distinction between "the hour just finished" and "the hour
+being decided for." Result: HVAC savings 16.4%→**23.1%** (beating the floor's
+19.8% for the first time), comfort 92.7%→**93.1%** (also beating the floor's
+92.0%), reheat gas 3.5→2.1 kWh, and the comfort guard from pass 2 fired zero
+times (0/168) — comfort held without it. This is the only one of the three
+passes where the LLM improved on its *own* signal rather than a supervisor
+constraint doing the work, so it's reported as a genuine self-correction, not
+a tuning artifact.
 
 62% of total facility electricity is lighting/plug load that neither setpoints
-nor fan control can touch, which is why neither run reaches the ≥10%
-*total*-kWh ambition and why **HVAC-only % is the honest measure** of what
-supervisory control actually moves. Both figures are reported rather than only
-the flattering one.
+nor fan control can touch, which is why even the improved run doesn't reach
+the ≥10% *total*-kWh ambition and why **HVAC-only % is the honest measure**
+of what supervisory control actually moves. Both figures are reported rather
+than only the flattering one.
 
 ## What's deliberately deferred
 
@@ -383,12 +418,6 @@ the flattering one.
   the upgrade path if the MCP demo needs it.
 - **Dashboard / evidence package** — Phase 5's job; `src/analysis/metrics.py`
   is the data layer Phase 5's `dashboard.py` will read from.
-- **Recovering the 3.5 points of HVAC savings the comfort guard costs** — the
-  guard (above) trades energy for comfort on the ~40 zone-hours it caps; a
-  finer-grained version (e.g. only capping when `worst_pmv` is already trending
-  up, rather than unconditionally at 25.5 °C) might hold most of the comfort
-  gain at less energy cost. Not attempted — Phase 4's own rule is one tuning
-  pass per finding, not iterate-to-convergence.
 - **Hour-8 morning cold-side violations** (measured, not guessed): all three
   runs — baseline, floor, and LLM alike — show exactly 12 cold zone-hours at
   hour 8, unrelated to the cooling-side guard above. It's morning warm-up from

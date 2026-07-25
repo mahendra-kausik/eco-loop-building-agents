@@ -181,6 +181,8 @@ def get_forecast_context(day_of_year: int, hour: int, day_of_week: int, horizon:
     priciest_tariff = max(hours_ahead, key=lambda h: h["tariff_per_kwh"])
 
     return {
+        "decision_hour": hour,
+        "decision_hour_occupied": is_occupied_hour(hour, day_of_week),
         "hours_ahead": hours_ahead,
         "hours_until_occupancy": hours_until_occupancy,
         "hours_until_vacancy": hours_until_vacancy,
@@ -279,6 +281,14 @@ def demo() -> None:
     forecast = get_forecast_context(day_of_year=200, hour=6, day_of_week=3, horizon=6)
     assert forecast["hours_until_occupancy"] == 2, forecast
     assert len(forecast["hours_ahead"]) == 6
+    # decision_hour_occupied names the hour being decided FOR -- current_state is
+    # always the PREVIOUS completed hour, so without this the LLM has no signal
+    # for the hour it's actually setting (root cause of the hour-19 bug: the model
+    # read hour 18's occupied/comfortable state and held comfort setpoints into an
+    # empty building). hour=10 weekday is occupied; hour=19 weekday is not, despite
+    # hour=18 (the last completed row at that point) being occupied.
+    assert get_forecast_context(200, 10, day_of_week=3)["decision_hour_occupied"] is True
+    assert get_forecast_context(200, 19, day_of_week=3)["decision_hour_occupied"] is False
     assert forecast["cheapest_hour"] != forecast["dirtiest_hour"]
     assert "cheapest_tariff_hour" in forecast and "priciest_tariff_hour" in forecast
     # outdoor_temp_c is None if EPW_PATH is unreachable, a float otherwise -- either
