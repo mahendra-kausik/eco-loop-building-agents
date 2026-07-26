@@ -345,6 +345,13 @@ class EnergyPlusRunner:
         exchange.set_actuator_value(state, self._handles[("actuator", FAN_AVAIL_SCHEDULE)], fan_available)
         self.injections += 1
 
+        # Printed right after the hourly state row above, so the console shows both
+        # directions of the loop: E+ state out, controller setpoints back in.
+        print(
+            f"    -> injected heat={heating_c:4.1f}C cool={cooling_c:4.1f}C "
+            f"fan={'on' if fan_available else 'off'}"
+        )
+
     def run(self) -> int:
         self._request_variables()
         self.runtime.callback_end_zone_timestep_after_zone_reporting(self.state, self._on_timestep)

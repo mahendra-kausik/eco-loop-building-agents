@@ -15,11 +15,3 @@ results/raw/
 *.edd
 *.shd
 eplusout*
-/demo-ready
-
-# Local-only project docs -- never pushed (see CLAUDE.md's own note on this).
-CLAUDE.md
-PROJECT_PLAN.md
-docs/HACKATHON_SPEC.md
-docs/ProblemStatement.pdf
-docs/video_script.md

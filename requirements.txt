@@ -12,5 +12,5 @@ pandas>=2.2
 numpy>=1.26
 plotly>=5.22
 
-# NOTE: pyenergyplus is NOT pip-installed — it ships inside the EnergyPlus install dir.
+# NOTE: pyenergyplus is NOT pip-installed, it ships inside the EnergyPlus install dir.
 # Access it via: sys.path.append(<E+ install dir>); from pyenergyplus.api import EnergyPlusAPI

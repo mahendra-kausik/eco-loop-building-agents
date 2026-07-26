@@ -22,7 +22,7 @@ MAX_TOKENS = 300
 
 def call(label: str, base_url: str | None, api_key: str | None, model: str) -> None:
     if not api_key:
-        print(f"[{label}] SKIPPED — no API key set")
+        print(f"[{label}] SKIPPED, no API key set")
         return
     client = OpenAI(api_key=api_key, base_url=base_url) if base_url else OpenAI(api_key=api_key)
     start = time.perf_counter()
@@ -42,7 +42,7 @@ def call(label: str, base_url: str | None, api_key: str | None, model: str) -> N
         )
     except Exception as e:
         latency_ms = (time.perf_counter() - start) * 1000
-        print(f"[{label}] FAILED after {latency_ms:.0f}ms — {type(e).__name__}: {e}")
+        print(f"[{label}] FAILED after {latency_ms:.0f}ms- {type(e).__name__}: {e}")
 
 
 if __name__ == "__main__":
