@@ -1,4 +1,4 @@
-"""The 5 tool functions (single source of truth, per CLAUDE.md's "built once,
+"""The 5 tool functions (single source of truth -- "built once,
 exposed twice"): used directly by the LLM safety supervisor (src/agent/safety.py)
 for reliability, and served via FastMCP (src/mcp_server/server.py) for spec
 compliance + demo.

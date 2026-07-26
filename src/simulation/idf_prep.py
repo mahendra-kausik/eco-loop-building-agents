@@ -1,6 +1,6 @@
 """Builds models/baseline.idf from the shipped 5ZoneAirCooled.idf ExampleFile.
 
-Per CLAUDE.md: never author an IDF from scratch, modify a shipped one minimally.
+Design rule: never author an IDF from scratch, modify a shipped one minimally.
 This always rebuilds baseline.idf fresh from the pristine source file, so it's
 idempotent by construction -- no "has this already been patched?" bookkeeping.
 
@@ -178,7 +178,7 @@ def export_runtime_idf(rows: list[dict], base_idf_path: str, out_path: str) -> s
     deliverable 2's "modified version generated during runtime evaluation",
     literally.
 
-    Per CLAUDE.md's locked architecture, control happens via live
+    Per this project's locked architecture, control happens via live
     set_actuator_value() calls during the run, never by rewriting IDF text --
     this function doesn't feed back into the simulation and nothing re-reads it.
     It's a post-hoc, human-readable record of what the controller actually did,
@@ -229,7 +229,7 @@ def export_runtime_idf(rows: list[dict], base_idf_path: str, out_path: str) -> s
         "! this agent run applied, hour by hour -- baked from results/raw's\n"
         "! state.csv, not hand-edited. Not simulation input for the live loop\n"
         "! (setpoints are injected via the pyenergyplus API at runtime, never by\n"
-        "! rewriting IDF text -- see CLAUDE.md's locked architecture decision);\n"
+        "! rewriting IDF text -- see the project's locked architecture decision);\n"
         "! this file is a readable record for diffing against models/baseline.idf.\n"
     )
     text = header + text

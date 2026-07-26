@@ -6,7 +6,7 @@ week of January -- fast, no need for our Chicago/July baseline yet) with a singl
 callback that, once the API is ready:
   1. dumps exchange.list_available_api_data_csv() to results/raw/api_data.csv
   2. tries to resolve every handle this project's runner.py will need
-  3. prints PASS/FAIL per handle (a -1 handle is a FAIL, per CLAUDE.md's
+  3. prints PASS/FAIL per handle (a -1 handle is a FAIL, per this project's
      "guard; a -1 handle must raise a clear error" rule)
   4. stops the simulation early once everything is checked (we don't need a full run)
 

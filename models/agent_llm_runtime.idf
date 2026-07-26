@@ -2,7 +2,7 @@
 ! this agent run applied, hour by hour -- baked from results/raw's
 ! state.csv, not hand-edited. Not simulation input for the live loop
 ! (setpoints are injected via the pyenergyplus API at runtime, never by
-! rewriting IDF text -- see CLAUDE.md's locked architecture decision);
+! rewriting IDF text -- see the project's locked architecture decision);
 ! this file is a readable record for diffing against models/baseline.idf.
 !-Generator IDFEditor 1.34
 !-Option OriginalOrderTop UseSpecialFormat

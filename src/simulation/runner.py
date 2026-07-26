@@ -1,7 +1,7 @@
 """Phase 1+2: E+ <-> Python closed loop.
 
 EnergyPlusRunner owns one simulation: it resolves variable/meter/actuator handles
-once (after warmup, guarding -1 per CLAUDE.md), streams one row per simulated hour
+once (after warmup, guarding -1), streams one row per simulated hour
 into an in-memory buffer + CSV, and -- if given a `controller` -- writes new
 setpoints back in once per simulated hour.
 
@@ -143,7 +143,7 @@ class EnergyPlusRunner:
 
     def _resolve_handles(self) -> None:
         """Resolve every handle once. A -1 handle raises immediately, naming the
-        offending variable/meter/actuator, per CLAUDE.md's fail-loudly-in-setup rule."""
+        offending variable/meter/actuator, per this project's fail-loudly-in-setup rule."""
         h = {}
         for var_name, key in self._variable_specs():
             handle = self.exchange.get_variable_handle(self.state, var_name, key)
@@ -310,7 +310,7 @@ class EnergyPlusRunner:
     def _on_begin_timestep(self, state) -> None:
         """Runs before the predictor, once per system timestep. Fires the
         controller (if any) once per simulated hour and actuates its result.
-        Per CLAUDE.md: runtime errors here are caught and answered with the
+        Runtime errors here are caught and answered with the
         last-known-good setpoints -- the simulation must never die because of
         the agent."""
         if self.controller is None:

@@ -1,5 +1,5 @@
 """The safety supervisor wrapping the LLM (this is the 30% System Integration
-criterion, per CLAUDE.md): schema-validate the LLM's JSON, clamp to hard ranges,
+criterion): schema-validate the LLM's JSON, clamp to hard ranges,
 retry once on invalid output, and fall back to the deterministic rule-based
 controller on ANY failure (timeout, error, invalid-after-retry) so the simulation
 never dies because of the agent. Every decision is logged to
@@ -63,8 +63,8 @@ def _validate(raw_reply: str) -> SetpointDecision:
 
 
 def _ask_llm(state: dict, forecast: dict, recent_errors: list[str]) -> tuple[SetpointDecision, dict]:
-    """One call, one retry on invalid output (with the validation error fed back),
-    per CLAUDE.md. Raises on final failure -- caller falls back."""
+    """One call, one retry on invalid output (with the validation error fed back).
+    Raises on final failure -- caller falls back."""
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": build_user_prompt(state, forecast, recent_errors)},

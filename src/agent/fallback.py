@@ -1,7 +1,6 @@
 """Deterministic rule-based controller: Phase 2's closed-loop proof, and the
 safety supervisor's fallback in Phase 3 when the LLM times out, errors, or
-returns invalid JSON (per CLAUDE.md, the loop must survive with the LLM
-totally unreachable).
+returns invalid JSON (the loop must survive with the LLM totally unreachable).
 
 Pure functions, no pyenergyplus import -- runnable and testable standalone.
 """
@@ -121,7 +120,7 @@ def fallback_controller(
 
     Phase 4 tuning: occupied cooling target raised 24.5 -> 25.0, unoccupied
     29.0 -> 29.5. Both stay well inside the existing hard range (occupied
-    cooling ceiling is 28C, unoccupied 30C -- that range is a CLAUDE.md locked
+    cooling ceiling is 28C, unoccupied 30C -- that range is a locked
     architecture decision, not reopened here); the baseline schedule itself
     over-cools during occupancy (23.9C, measured occupied PMV as low as -1.17
     overnight and -0.30 mid-day), so there was headroom on the warm side that

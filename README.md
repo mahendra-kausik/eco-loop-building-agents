@@ -145,10 +145,10 @@ like-for-like.
 | `src/mcp_server/` | FastMCP server exposing the tool layer |
 | `src/analysis/` | Metrics and dashboard generation |
 | `models/` | Baseline `.idf` + runtime-modified versions |
-| `data/` | Weather file, grid carbon-intensity and tariff profile |
+| `data/` | Grid carbon-intensity and tariff profile (weather loads from the EnergyPlus install) |
 | `results/` | Run outputs, `decision_log.jsonl`, dashboard, figures |
 | `docs/` | Problem spec, architecture document |
 | `scripts/` | Entry points listed above |
 
-Project context and the phase-by-phase build log live in [`CLAUDE.md`](CLAUDE.md) and
-[`PROJECT_PLAN.md`](PROJECT_PLAN.md).
+Full technical detail — prompt strategy, latency measurement, metering corrections, and
+the Phase 5 spec-gap closures — lives in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).

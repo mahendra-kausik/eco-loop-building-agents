@@ -69,8 +69,8 @@ def _cards_html(result: dict) -> str:
          f"{result['comfort_delta_pts']:+.1f} pts vs baseline&rsquo;s {b['comfort_in_band_pct']:.1f}%"),
         ("CO&#8322; avoided", f"{result['kg_co2_avoided']:.0f} kg",
          f"{b['kg_co2']:.0f} &rarr; {a['kg_co2']:.0f} kg"),
-        ("Cost saved", f"{result['cost_saved']:.2f}",
-         f"over {a['hours']} simulated hours"),
+        ("Cost saved", f"&#8377;{result['cost_saved']:,.2f}",
+         f"at &#8377;6/kWh tariff, over {a['hours']} simulated hours"),
         ("Peak demand", f"{a['peak_demand_kw']:.1f} kW",
          f"baseline {b['peak_demand_kw']:.1f} kW"),
     ]

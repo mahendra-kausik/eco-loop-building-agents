@@ -1,17 +1,17 @@
 """OpenAI-compatible client for Cerebras (preferred) / Groq, round-robined per
 call. Either key may be blank; with both blank, complete() raises
 LLMUnavailable and the safety supervisor falls straight through to the
-rule-based schedule -- so the project still runs on Groq alone, per CLAUDE.md.
+rule-based schedule -- so the project still runs on either provider alone.
 
-Provider ordering changed in Phase 4 (user-approved 2026-07-25). CLAUDE.md
-originally locked "Groq primary, Cerebras fallback" on the assumption Groq had
-the better free tier; measuring the published gpt-oss-120b quotas showed the
-opposite on the limit that actually binds here -- Cerebras carries 1M tokens/day
-against Groq's 200K, i.e. ~2.7 full 7-day runs/day vs ~0.5. See
+Provider ordering changed in Phase 4 (user-approved 2026-07-25): originally
+"Groq primary, Cerebras fallback" on the assumption Groq had the better free
+tier; measuring the published gpt-oss-120b quotas showed the opposite on the
+limit that actually binds here -- Cerebras carries 1M tokens/day against
+Groq's 200K, i.e. ~2.7 full 7-day runs/day vs ~0.5. See
 _PROVIDER_MIN_INTERVAL below and docs/ARCHITECTURE.md's "Rate limiting" section.
 
 The watchdog is the client's own request timeout (no threads/signals needed) --
-LLM_TIMEOUT_SECONDS from .env, default 15s, matching CLAUDE.md's ~15s figure.
+LLM_TIMEOUT_SECONDS from .env, default 15s.
 """
 import os
 import time
@@ -31,7 +31,7 @@ MAX_TOKENS = 1000
 # EnergyPlus steps through simulated hours far faster than real time, so 168
 # hourly decisions can fire within seconds of each other -- straight into free-
 # tier caps. This is a real-time floor between calls to the SAME provider, not
-# a decision-cadence change (that stays hourly-simulated per CLAUDE.md).
+# a decision-cadence change (that stays once per simulated hour).
 #
 # Phase 4 correction: the original 2.5s default was sized for a requests-per-
 # minute cap ("30 RPM tier"). A live run's 429s turned out to be a *tokens*-
@@ -78,7 +78,7 @@ def _min_interval(provider_name: str) -> float:
 # the same per-provider MIN_CALL_INTERVAL_SECONDS. Still fails over to the other
 # configured provider within the same call if the rotated-to one errors, and
 # still reduces to Groq-only rotation (a no-op) when FALLBACK_API_KEY is blank --
-# CLAUDE.md's "works fully on Groq alone" guarantee is unchanged.
+# the "works fully on one provider alone" guarantee is unchanged.
 _rr_index = 0
 
 
@@ -110,7 +110,7 @@ def _load_providers() -> list[Provider]:
 
     CEREBRAS_API_KEY is the preferred name now that this provider is no longer
     the "fallback"; FALLBACK_API_KEY is still honored so existing .env files
-    (and CLAUDE.md's original wording) keep working unchanged."""
+    keep working unchanged."""
     providers = []
     cerebras_key = (
         os.environ.get("CEREBRAS_API_KEY", "").strip()

@@ -1,4 +1,4 @@
-"""Pre-commit gate for anything touching the loop (per CLAUDE.md). Two checks:
+"""Pre-commit gate for anything touching the loop. Two checks:
 
 1. src/agent/fallback.py's own assert-based self-check (clamp_setpoints on
    illegal inputs comes back legal) -- fast, no simulation needed.

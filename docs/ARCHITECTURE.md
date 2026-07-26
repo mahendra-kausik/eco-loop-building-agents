@@ -23,7 +23,7 @@ flowchart LR
     PEND --> MCPPOLL
 ```
 
-One EnergyPlus process, two callbacks (per CLAUDE.md's "read at end-of-timestep,
+One EnergyPlus process, two callbacks ("read at end-of-timestep,
 write at begin-of-timestep" split — see `src/simulation/runner.py`'s docstring for
 why). A `Controller` is any `(row, day_of_year, hour, day_of_week) -> (heating_c,
 cooling_c, fan_available)` callable; `scripts/run_agent.py --controller
@@ -86,7 +86,7 @@ below for current, verified numbers.
 ## Tool-calling architecture
 
 Five plain Python functions in `src/tools/building_tools.py` are the single
-source of truth (CLAUDE.md's "built once, exposed twice"):
+source of truth ("built once, exposed twice"):
 
 | Tool | Purpose |
 |---|---|
@@ -219,8 +219,8 @@ real time, so a run's ~24–168 hourly decisions can fire within seconds of each
 other in wall-clock time — straight into free-tier caps. `llm_client.py`
 enforces a minimum real-time interval between calls to the *same* provider
 (`LLM_MIN_CALL_INTERVAL_SECONDS`) — a floor on wall-clock spacing, not a
-change to the hourly *simulated* decision cadence, which stays locked per
-CLAUDE.md. When a provider is still throttled despite the floor, the safety
+change to the hourly *simulated* decision cadence, which stays locked.
+When a provider is still throttled despite the floor, the safety
 supervisor's fallback absorbs it exactly like any other LLM failure: zero
 controller errors, zero crashes, proven in every run in this document.
 
@@ -343,7 +343,7 @@ in order of impact: (1) the AHU fan actuator no longer conditions the
 building 2 extra hours/day outside occupancy, (2) predictive (not reactive)
 occupancy gives the first occupied hour the right clamp range instead of the
 previous hour's, and (3) deterministic setpoint targets moved off the
-baseline's over-cooled 23.9 °C toward the middle of the CLAUDE.md-locked
+baseline's over-cooled 23.9 °C toward the middle of the locked
 24–28 °C occupied range.
 
 **Where the LLM currently stands versus the deterministic floor.** Three
@@ -416,8 +416,8 @@ than only the flattering one.
 
 ## Phase 5: closing two literal spec gaps, and two negative results
 
-A re-read of `docs/Problem Statement.pdf` (the source PDF, not just this
-repo's own condensed `docs/HACKATHON_SPEC.md`) with the remaining build time
+A re-read of `docs/Problem Statement.pdf` (the source PDF, not just our own
+condensed internal spec notes) with the remaining build time
 surfaced two requirements named verbatim that the code didn't meet yet:
 streamed **indoor air quality**, and the LLM reasoning against **peak demand
 thresholds**. Both are closed below. Investigating a third gap (the hour-8
@@ -488,7 +488,7 @@ LLM run:
 | 2h lead, heating→21C | 12 (unchanged) | 11.1% | 7.4 kWh |
 | 2h lead, heating→23C (range ceiling) | 11 (−1) | 10.5% | 51.2 kWh |
 
-Even at the most aggressive setting legally available under the CLAUDE.md-
+Even at the most aggressive setting legally available under the
 locked clamp range, the violation count barely moved while HVAC savings gave
 back 9+ points and reheat gas spiked 0→51 kWh. Independently confirmed this
 is structural, not a lead-time problem: **the baseline schedule itself

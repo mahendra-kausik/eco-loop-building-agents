@@ -1,4 +1,4 @@
-"""FastMCP server exposing src/tools' 5 functions, per CLAUDE.md's "built once,
+"""FastMCP server exposing src/tools' 5 functions -- "built once,
 exposed twice": the control loop calls them directly (src/agent/safety.py) for
 reliability; this server exposes the same functions over MCP for spec
 compliance + demo, so an external MCP client (Claude Desktop, scripts/mcp_demo.py)
