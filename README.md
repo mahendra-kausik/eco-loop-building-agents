@@ -9,9 +9,8 @@ Submission for the Honeywell hackathon, Problem 1 (Eco-Loop Building Agents).
 
 ## Headline results
 
-7 simulated days, Chicago July, identical weather/building for both runs. All
-energy figures from EnergyPlus's own meter output (`eplusmtr.csv`), not a
-self-reported total — see `docs/ARCHITECTURE.md`'s metering-correction note.
+7 simulated days, Chicago July, identical weather/building for both runs. All energy
+figures are read from EnergyPlus's own meter output (`eplusmtr.csv`).
 
 | Metric | Baseline | LLM + supervisor | Rule-based floor (no LLM) |
 |---|---|---|---|
@@ -23,31 +22,17 @@ self-reported total — see `docs/ARCHITECTURE.md`'s metering-correction note.
 | CO2 (kg, grid-intensity weighted) | 663.8 | **602.2** | 610.4 |
 | Simulated days without a crash | — | 14 (336/336 decisions, 0 fallback) | 14 (fallback-only) |
 
-The LLM now beats its own deterministic fallback on every axis at once —
-energy, HVAC-only energy, and comfort — not just comfort as in the previous
-tuning pass. Both configurations beat baseline on energy **and** comfort
-simultaneously; the savings aren't taken out of occupants' comfort.
+The LLM controller beats both the fixed baseline and the deterministic rule-based
+controller on energy and comfort simultaneously — the savings aren't taken out of
+occupants' comfort.
 
-One caveat we'd rather state than bury: **~62% of facility electricity is
-lighting/plug load** that no setpoint or fan decision can touch. That's why
-HVAC-only % is the honest measure of what supervisory control actually
-moves, and why we report both numbers.
-
-The gap that used to separate the LLM from the floor was a single prompt
-defect, not a modeling limitation: the state digest describes the *last
-completed* hour, so at the last occupied hour of the day the LLM was reading
-"occupied, comfortable" and coasting on near-occupied setpoints into an empty
-building — 20+ kWh/day of pure waste, plus all of the run's reheat gas.
-Adding an explicit `decision_hour_occupied` flag to the forecast context (the
-hour actually being decided for, distinct from the state digest's hour) let
-the model self-correct with no supervisor override needed — the comfort guard
-never had to fire this run (0 of 168), and only 3 of 168 decisions fell back
-to the deterministic controller (a provider hiccup, not a model failure)
-([`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)).
+~62% of facility electricity is lighting and plug load, outside supervisory HVAC
+control. HVAC-only figures isolate what the agent can actually influence, which is
+why both total and HVAC-only numbers are reported.
 
 Dashboard: [`results/dashboard.html`](results/dashboard.html) · Demo video: _link TBD_
 
-## Architecture
+## How it works
 
 ```
 EnergyPlus (pyenergyplus runtime callback)
@@ -66,8 +51,132 @@ EnergyPlus (pyenergyplus runtime callback)
 EnergyPlus actuators (setpoint schedule values)  ── loop closes
 ```
 
-The supervisor is the point: the simulation **cannot** be killed by a bad, slow, or absent
-LLM response. Full detail in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+The supervisor is the point: the simulation **cannot** be killed by a bad, slow, or
+absent LLM response.
+
+## Tool-calling architecture
+
+Five plain Python functions in `src/tools/building_tools.py` are the single source
+of truth for every interaction with the building:
+
+| Tool | Purpose |
+|---|---|
+| `get_building_state` | Compact digest of the last completed hourly reading |
+| `get_forecast_context` | Next N hours of occupancy + grid carbon/tariff |
+| `propose_setpoints` | Builds the prompt, calls the LLM, returns raw text |
+| `inject_setpoints` | Clamps to the hard safety range, optionally writes the MCP pending-setpoints file |
+| `get_recent_errors` | Tails the E+ `.err` file + failed decisions from the log |
+
+They're consumed two ways: **directly**, by `src/agent/safety.py`'s supervisor
+inside the hot control loop (no IPC, no serialization overhead — the reliability
+path), and **over MCP**, by `src/mcp_server/server.py` (FastMCP, stdio transport),
+so an external MCP client (Claude Desktop, `scripts/mcp_demo.py`) can inspect state
+and drive setpoints without touching the loop's source. Because both paths call the
+same functions, there is exactly one place that knows how to read a digest or clamp
+a setpoint — the MCP server can't drift out of sync with the in-process loop.
+
+The MCP transport is a polled file (`inject_setpoints` writes
+`results/pending_setpoints.json`; `--controller mcp` reads it once per simulated
+hour, falling back to the rule-based controller if nothing new has arrived). Verified
+end-to-end: a setpoint written via the MCP `inject_setpoints` call was read back and
+actuated on the very next simulated hour. A file is boring and cannot hang a live
+run — deliberate, given a hang directly conflicts with the 30%-weighted requirement
+that the closed loop survive an extended horizon without crashing.
+
+Full detail: [`docs/ARCHITECTURE.md` § Tool-calling architecture](docs/ARCHITECTURE.md#tool-calling-architecture).
+
+## Safety supervisor
+
+`src/agent/safety.py` wraps every LLM call in a fixed six-step chain:
+
+1. Build the prompt from `get_building_state` + `get_forecast_context` + `get_recent_errors`.
+2. Call the LLM with `response_format={"type": "json_object"}` and a hard timeout.
+3. Validate against a Pydantic schema (`SetpointDecision`); one retry on failure,
+   with the validation error fed back to the model.
+4. Clamp the validated pair through the same `clamp_setpoints` logic the rule-based
+   controller uses — not a reimplementation.
+5. **Any** failure anywhere in this chain — timeout, network error, invalid JSON
+   after retry, provider outage — falls through to the deterministic rule-based
+   controller. The simulation is never blocked on the LLM.
+6. Every decision (prompt inputs, raw reply, provider, latency, retry flag, clamped
+   result, fallback flag, error) is appended as one line to `results/decision_log.jsonl`.
+
+Verified crash-proof with the LLM totally unreachable: a full 7-simulated-day run
+with both API keys blank completed with exit code 0, 168/168 setpoint injections, 0
+controller errors, and output numerically identical to a pure rule-based run —
+confirming the fallback path *is* the deterministic controller, not an approximation
+of it. A separate 14-day run with the LLM live the entire time (336/336 decisions,
+0 fallback) is the endurance counterpart.
+
+An anti-thrash rate limit caps hour-to-hour setpoint movement at ±1.5°C (exempted
+across occupied↔unoccupied transitions, where a real step is the point) — insurance
+against oscillation between LLM decisions or between an LLM decision and a very
+different fallback value.
+
+Full detail: [`docs/ARCHITECTURE.md` § Safety supervisor](docs/ARCHITECTURE.md#safety-supervisor-the-reliability-path).
+
+## Prompt engineering
+
+The system prompt states the decision priority explicitly — comfort is a hard,
+non-negotiable floor, then energy, then carbon/cost — and restates the hard clamp
+ranges even though the supervisor enforces them regardless, so the model has every
+incentive to stay inside them on its own. The user prompt is always the JSON-encoded
+state digest and forecast, never raw simulation output.
+
+The forecast context distinguishes the hour being decided *for* from the hour
+described in the state digest (`forecast.decision_hour_occupied`) — the digest
+reflects the last completed hour, but the model is setting the next one, and those
+differ exactly at occupancy transitions. Making the distinction explicit in the
+prompt, rather than leaving the model to infer it, is what lets the agent set full
+setback the moment occupancy ends instead of coasting on near-occupied setpoints
+into an empty building.
+
+Full detail: [`docs/ARCHITECTURE.md` § Prompt strategy](docs/ARCHITECTURE.md#prompt-strategy).
+
+## Handling lengthy simulation logs
+
+The LLM never sees EnergyPlus's raw output — not the `.eso` file, not `.err`, not
+the runner's 5-zones × N-hours CSV. `get_building_state` reduces one hourly reading
+to ~12 scalar fields (mean/min/max zone temp, the single worst-|PMV| zone, current
+setpoints, outdoor temp, energy this hour) regardless of how many zones the building
+has. `get_forecast_context` caps the lookahead window at a fixed horizon rather than
+exposing the full 24-hour carbon/tariff table. `get_recent_errors` tails only the
+last N severity lines plus the last N failed decisions, clipped to a fixed character
+budget — never the full log.
+
+Net effect: **prompt size is constant regardless of simulation horizon.** A 7-day
+run and a 30-day run send the same-sized prompt every hour.
+
+Full detail: [`docs/ARCHITECTURE.md` § Long-log / high-volume-data handling](docs/ARCHITECTURE.md#long-log--high-volume-data-handling).
+
+## Prompt latency management
+
+Measured against Groq and Cerebras (`gpt-oss-120b` on both, identical
+OpenAI-compatible API — only `base_url`/`api_key` differ):
+
+| Scenario | Latency |
+|---|---|
+| Trivial one-word prompt | Groq 996 ms, Cerebras 405 ms |
+| Real prompt, 48-decision run | p50 1.0–1.5 s, p95 ~2.2–2.5 s |
+| Full 7-day run, 168 decisions | wall clock ≈ 7 min total (incl. E+ compute) |
+
+The LLM decides once per simulated hour — decoupled from EnergyPlus's own timestep
+rate, which advances far faster than real time. Left unmanaged, a run's ~24–168
+hourly decisions would fire within seconds of each other in wall-clock time,
+straight into free-tier rate limits. `llm_client.py` enforces a minimum real-time
+interval between calls to the same provider, sized per-provider against each one's
+measured limit rather than a single guessed number: Groq and Cerebras bind on
+different constraints (Groq's cap is a *token* budget, not a request count) and
+inverting that assumption cost 8x in the interval before it was corrected by reading
+the actual 429 response bodies instead of assuming. Cerebras and Groq are
+round-robined per call with within-call failover to the other, which took genuine
+LLM participation in a live run from 43% to over 80%.
+
+Error strings fed back to the model via `get_recent_errors` are clipped to a fixed
+length — the raw provider error bodies otherwise add ~30% to prompt size the moment
+failures start, which is exactly when the token budget is already the problem.
+
+Full detail: [`docs/ARCHITECTURE.md` § Latency measurement & management](docs/ARCHITECTURE.md#latency-measurement--management).
 
 ## Quickstart
 
