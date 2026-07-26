@@ -321,7 +321,10 @@ occupied comfort held over the full 14 days. Confirms the closed loop survives
 2x the standard horizon with the LLM live the entire time, not just the
 deterministic fallback. Full decision log tracked at
 `results/decision_log_soak14.jsonl` (336 entries, same evidence-package
-treatment as `results/decision_log_llm_unreachable.jsonl`).
+treatment as `results/decision_log_llm_unreachable.jsonl`). Surfaced on
+`results/dashboard.html` as its own strip below the savings charts, since it
+has no matching-horizon baseline to compare against and so can't be more
+savings cards (`_reliability_strip_html` in `src/analysis/dashboard.py`).
 
 ## Headline results (baseline vs agent, 7 simulated days, Jul 15–21 Chicago)
 
