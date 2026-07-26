@@ -303,7 +303,7 @@ API" language. For a fully offline setup, point `GROQ_MODEL`/`GROQ_API_KEY`'s
 same or an equivalent open model — the client code is unchanged since Ollama
 speaks the same OpenAI-compatible chat-completions shape.
 
-## Reliability soak (Phase 4)
+## Reliability soak (Phase 4 + 6)
 
 14 simulated days (2x the standard 7-day horizon, still within `idf_prep.py`'s
 17-day cap since the run period starts fixed at Jul 15), fallback controller,
@@ -311,6 +311,15 @@ speaks the same OpenAI-compatible chat-completions shape.
 controller errors. `models/baseline.idf` confirmed byte-identical afterward
 (the soak run's IDF copy goes to a scratch path, per the `--days != 7` guard
 in `scripts/run_agent.py`).
+
+That soak proved the E+/Python loop itself; it made zero LLM calls. A second
+14-day run with `--controller llm` (`results/raw/soak_llm/`) closes that gap:
+exit 0, 336/336 rows and injections, 0 controller errors, and — better than
+any 7-day run to date — **0/336 decisions fell back**, all genuine LLM calls
+round-robined across both providers, latency p50 693ms / p95 1641ms, 92.9%
+occupied comfort held over the full 14 days. Confirms the closed loop survives
+2x the standard horizon with the LLM live the entire time, not just the
+deterministic fallback.
 
 ## Headline results (baseline vs agent, 7 simulated days, Jul 15–21 Chicago)
 

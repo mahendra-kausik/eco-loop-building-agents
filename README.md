@@ -21,7 +21,7 @@ self-reported total — see `docs/ARCHITECTURE.md`'s metering-correction note.
 | Reheat gas (kWh) | 32.9 | **3.6** | 0.0 |
 | Peak demand (kW) | 19.9 | **19.0** | — |
 | CO2 (kg, grid-intensity weighted) | 663.8 | **602.2** | 610.4 |
-| Simulated days without a crash | — | 14+ (2x standard horizon) | 14+ |
+| Simulated days without a crash | — | 14 (336/336 decisions, 0 fallback) | 14 (fallback-only) |
 
 The LLM now beats its own deterministic fallback on every axis at once —
 energy, HVAC-only energy, and comfort — not just comfort as in the previous
