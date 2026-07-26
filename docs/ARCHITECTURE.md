@@ -319,7 +319,9 @@ any 7-day run to date — **0/336 decisions fell back**, all genuine LLM calls
 round-robined across both providers, latency p50 693ms / p95 1641ms, 92.9%
 occupied comfort held over the full 14 days. Confirms the closed loop survives
 2x the standard horizon with the LLM live the entire time, not just the
-deterministic fallback.
+deterministic fallback. Full decision log tracked at
+`results/decision_log_soak14.jsonl` (336 entries, same evidence-package
+treatment as `results/decision_log_llm_unreachable.jsonl`).
 
 ## Headline results (baseline vs agent, 7 simulated days, Jul 15–21 Chicago)
 
