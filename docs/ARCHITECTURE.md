@@ -393,20 +393,12 @@ setpoint drifting down from a high prior value can't get dragged back out of
 band by the limiter) and logged as its own `was_comfort_capped` flag. Result:
 comfort 90.5%→92.7%, HVAC savings 18.9%→16.4%. Capped on 5 of 168 decisions
 — pass 2 traded energy for comfort, the first time the LLM beat the floor on
-comfort but the floor still led on both kWh measures. Pass 3 (prompt-only,
-this pass): the previous two passes had been tuning the wrong variable —
-occupied-hour cooling was never the source of the LLM's energy deficit (it
-was already beating the floor there); the deficit was entirely a stale-
-occupancy-signal bug at hour transitions (see above). Added
-`decision_hour_occupied` to the forecast context and ~4 lines of system
-prompt naming the distinction between "the hour just finished" and "the hour
-being decided for." Result: HVAC savings 16.4%→**23.1%** (beating the floor's
-19.8% for the first time), comfort 92.7%→**93.1%** (also beating the floor's
-92.0%), reheat gas 3.5→2.1 kWh, and the comfort guard from pass 2 fired zero
-times (0/168) — comfort held without it. This is the only one of the three
-passes where the LLM improved on its *own* signal rather than a supervisor
-constraint doing the work, so it's reported as a genuine self-correction, not
-a tuning artifact.
+comfort but the floor still led on both kWh measures. Pass 3 (prompt-only, this pass): root cause and fix (`decision_hour_occupied`)
+are detailed in full above — restated here only for the same before/after
+shape as passes 1–2. Result: HVAC savings 16.4%→**23.1%** (beating the
+floor's 19.8% for the first time), comfort 92.7%→**93.1%** (also beating the
+floor's 92.0%), reheat gas 3.5→2.1 kWh, comfort guard fired zero times
+(0/168) — comfort held without it.
 
 62% of total facility electricity is lighting/plug load that neither setpoints
 nor fan control can touch, which is why even the improved run doesn't reach
@@ -509,13 +501,8 @@ transition), out of scope for a locked-range, minimal-IDF-change pass.
   control (Phase 4 added a third actuator to the core loop only) — the mcp
   controller mode always leaves the fan on; widening that tool's signature is
   the upgrade path if the MCP demo needs it.
-- **Hour-8 morning cold-side violations** — investigated in Phase 5 (see
-  above), not deferred for lack of trying. Optimal-start pre-heat was
-  measured to barely move the violation count (12→11 of 275 zone-hours even
-  at the most aggressive legal setting) while costing real HVAC savings and
-  spiking reheat gas, and the baseline schedule's own built-in 2-hour AHU
-  lead has the identical violation, confirming it's thermal-capacity-limited,
-  not schedule-limited. A real fix needs increased heating capacity or a
-  shallower setback depth — out of scope for a locked-range, minimal-IDF
-  pass, so left as a known, honestly-reported limitation rather than
-  papered over.
+- **Hour-8 morning cold-side violations** — investigated and reverted, not
+  skipped; see "Investigated, not shipped: optimal-start pre-heat" above for
+  the measured data. Thermal-capacity-limited, not schedule-limited — a real
+  fix needs more heating capacity or a shallower setback depth, out of scope
+  for a locked-range, minimal-IDF pass.
