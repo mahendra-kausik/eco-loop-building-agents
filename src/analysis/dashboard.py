@@ -194,7 +194,7 @@ def _reliability_strip_html(soak_dir: str, soak_log: str) -> str:
         return ""
     return (
         f'<div class="reliability">'
-        f"<strong>{days}-day LLM endurance run</strong> &mdash; "
+        f"<strong>{days}-day LLM endurance run</strong> - "
         f"{log['decisions']}/{log['decisions']} decisions, "
         f"{log['fallback_count']} fallback, "
         f"{soak['comfort_in_band_pct']:.1f}% comfort in-band, "
@@ -241,7 +241,7 @@ def build_dashboard(baseline_dir: str, agent_dir: str, out_path: str, decision_l
     )
 
     html = f"""<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>Eco-Loop Building Agents &mdash; savings dashboard</title>
+<html><head><meta charset="utf-8"><title>Eco-Loop Building Agents- savings dashboard</title>
 <style>
   body {{ font-family: system-ui, -apple-system, "Segoe UI", sans-serif; margin: 0;
          background: #F4F6F8; color: #1B2631; }}
@@ -261,7 +261,7 @@ def build_dashboard(baseline_dir: str, agent_dir: str, out_path: str, decision_l
   footer {{ padding: 18px 40px 40px; font-size: 12px; opacity: .6; }}
 </style></head><body>
 <header>
-  <h1>Eco-Loop Building Agents &mdash; quantitative savings</h1>
+  <h1>Eco-Loop Building Agents- quantitative savings</h1>
   <p>EnergyPlus closed loop, {result['agent']['hours']} simulated hours &middot;
      baseline <code>{os.path.basename(baseline_dir)}</code> vs agent
      <code>{os.path.basename(agent_dir)}</code> &middot; energy from EnergyPlus

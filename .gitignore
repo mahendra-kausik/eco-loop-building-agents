@@ -15,6 +15,7 @@ results/raw/
 *.edd
 *.shd
 eplusout*
+/demo-ready
 
 # Local-only project docs -- never pushed (see CLAUDE.md's own note on this).
 CLAUDE.md
