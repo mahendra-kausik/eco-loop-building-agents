@@ -23,6 +23,7 @@ from src.analysis.metrics import (
     _read_meter_kwh_by_hour,
     _read_state_csv,
     compare,
+    summarize,
     summarize_decision_log,
 )
 from src.tools.building_tools import ZONES, load_carbon_profile
@@ -173,7 +174,37 @@ def _decision_fig(log_path: str, days: int) -> go.Figure | None:
     return fig
 
 
-def build_dashboard(baseline_dir: str, agent_dir: str, out_path: str, decision_log: str) -> str:
+def _reliability_strip_html(soak_dir: str, soak_log: str) -> str:
+    """14-day LLM endurance run has no matching-horizon baseline to compare()
+    against (compare() hard-raises on horizon mismatch by design -- see
+    metrics.py), so it can't be more comparison cards. It's evidence of a
+    different claim (System Integration: survives an extended horizon without
+    crashing), rendered as its own strip rather than mixed into the 6 savings
+    cards above. Returns "" if the soak run's outputs aren't present, so this
+    stays fully optional and demo() doesn't need to fake it."""
+    if not (os.path.isdir(soak_dir) and os.path.exists(soak_log)):
+        return ""
+    try:
+        soak = summarize(soak_dir)
+    except (FileNotFoundError, ValueError):
+        return ""
+    days = soak["hours"] // 24
+    log = summarize_decision_log(soak_log, days)
+    if log is None:
+        return ""
+    return (
+        f'<div class="reliability">'
+        f"<strong>{days}-day LLM endurance run</strong> &mdash; "
+        f"{log['decisions']}/{log['decisions']} decisions, "
+        f"{log['fallback_count']} fallback, "
+        f"{soak['comfort_in_band_pct']:.1f}% comfort in-band, "
+        f"latency p50 {log['latency_p50_ms']:.0f} ms / p95 {log['latency_p95_ms']:.0f} ms"
+        f"</div>"
+    )
+
+
+def build_dashboard(baseline_dir: str, agent_dir: str, out_path: str, decision_log: str,
+                     soak_dir: str = "", soak_log: str = "") -> str:
     result = compare(baseline_dir, agent_dir)
     baseline_rows, agent_rows = _read_state_csv(baseline_dir), _read_state_csv(agent_dir)
     baseline_meters, agent_meters = _read_meter_kwh_by_hour(baseline_dir), _read_meter_kwh_by_hour(agent_dir)
@@ -225,6 +256,8 @@ def build_dashboard(baseline_dir: str, agent_dir: str, out_path: str, decision_l
   .card .sub {{ font-size: 12px; opacity: .65; }}
   .chart {{ background: #fff; border-radius: 10px; margin: 0 40px 20px;
             box-shadow: 0 1px 3px rgba(0,0,0,.10); overflow: hidden; }}
+  .reliability {{ margin: 0 40px 20px; padding: 12px 22px; font-size: 13px;
+                   background: #fff; border-radius: 10px; box-shadow: 0 1px 3px rgba(0,0,0,.10); }}
   footer {{ padding: 18px 40px 40px; font-size: 12px; opacity: .6; }}
 </style></head><body>
 <header>
@@ -236,6 +269,7 @@ def build_dashboard(baseline_dir: str, agent_dir: str, out_path: str, decision_l
 </header>
 <div class="cards">{_cards_html(result)}</div>
 {"".join(f'<div class="chart">{b}</div>' for b in blocks)}
+{_reliability_strip_html(soak_dir, soak_log)}
 <footer>{footer}</footer>
 </body></html>"""
 
@@ -313,13 +347,16 @@ def main() -> None:
     parser.add_argument("--agent", default=os.path.join(repo, "results", "raw", "agent_llm"))
     parser.add_argument("--out", default=os.path.join(repo, "results", "dashboard.html"))
     parser.add_argument("--decision-log", default=os.path.join(repo, "results", "decision_log.jsonl"))
+    parser.add_argument("--soak", default=os.path.join(repo, "results", "raw", "soak_llm"),
+                         help="optional 14-day LLM endurance run dir; omitted from the dashboard if absent")
+    parser.add_argument("--soak-log", default=os.path.join(repo, "results", "decision_log_soak14.jsonl"))
     parser.add_argument("--demo", action="store_true", help="run the synthetic self-check and exit")
     args = parser.parse_args()
 
     if args.demo:
         demo()
         return
-    build_dashboard(args.baseline, args.agent, args.out, args.decision_log)
+    build_dashboard(args.baseline, args.agent, args.out, args.decision_log, args.soak, args.soak_log)
 
 
 if __name__ == "__main__":
