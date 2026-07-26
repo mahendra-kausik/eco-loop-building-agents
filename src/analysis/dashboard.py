@@ -4,7 +4,7 @@ Renders ONE self-contained Plotly HTML file -- plotly.js is inlined, no CDN, no
 external assets -- so a judge can open it offline from a fresh clone. That's also
 why every number here comes from src/analysis/metrics.py rather than being
 recomputed: metrics reads EnergyPlus's own eplusmtr.csv, which is the whole point
-of the Phase 4 metering correction (see docs/ARCHITECTURE.md). A dashboard that
+of the Phase 4 metering correction (see ARCHITECTURE.md). A dashboard that
 recomputed kWh its own way could disagree with the headline numbers in the README,
 and then neither would be trustworthy.
 

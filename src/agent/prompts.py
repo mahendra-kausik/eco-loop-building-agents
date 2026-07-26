@@ -3,7 +3,7 @@
 Kept deliberately small and fixed-size: the LLM never sees raw simulation output
 (5 zones x N hourly rows) -- it sees the compact digest src/tools/building_tools.py
 already reduced that to, plus a short forecast window. Prompt size is therefore
-constant regardless of simulation horizon. See docs/ARCHITECTURE.md for the
+constant regardless of simulation horizon. See ARCHITECTURE.md for the
 measured token/latency numbers this produces.
 """
 import json

@@ -8,7 +8,7 @@ Provider ordering changed in Phase 4 (user-approved 2026-07-25): originally
 tier; measuring the published gpt-oss-120b quotas showed the opposite on the
 limit that actually binds here -- Cerebras carries 1M tokens/day against
 Groq's 200K, i.e. ~2.7 full 7-day runs/day vs ~0.5. See
-_PROVIDER_MIN_INTERVAL below and docs/ARCHITECTURE.md's "Rate limiting" section.
+_PROVIDER_MIN_INTERVAL below and ARCHITECTURE.md's "Rate limiting" section.
 
 The watchdog is the client's own request timeout (no threads/signals needed) --
 LLM_TIMEOUT_SECONDS from .env, default 15s.
@@ -51,7 +51,7 @@ MAX_TOKENS = 1000
 # Note they invert: Groq has 6x the request headroom but a quarter of the token
 # headroom. Daily budgets differ even more (Groq 200K TPD ~= 0.5 full 7-day
 # runs; Cerebras 1M TPD ~= 2.7), which is why round-robin leans on Cerebras in
-# practice. See docs/ARCHITECTURE.md's "Rate limiting" section.
+# practice. See ARCHITECTURE.md's "Rate limiting" section.
 # ponytail: static per-provider floors, not a real token-bucket tracking actual
 # usage -- fine while the prompt size is stable; a bucket only earns its keep if
 # per-call token cost starts varying a lot.

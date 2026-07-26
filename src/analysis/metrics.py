@@ -108,7 +108,7 @@ def compare(baseline_dir: str, agent_dir: str) -> dict:
     """% savings of agent vs baseline: total-facility (the spec's literal ask)
     and HVAC-only (the honest measure of what setpoints/fan control can
     actually move -- ~62% of total facility electricity is lighting/plug load,
-    see docs/ARCHITECTURE.md)."""
+    see ARCHITECTURE.md)."""
     baseline = summarize(baseline_dir)
     agent = summarize(agent_dir)
     if baseline["hours"] != agent["hours"]:

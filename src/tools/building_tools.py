@@ -127,7 +127,7 @@ def load_carbon_profile() -> list[dict]:
 def get_building_state(row: Optional[dict], peak_kw_so_far: Optional[float] = None) -> dict:
     """Compact digest of the most recently completed hourly reading. Fixed size
     regardless of how many zones/hours exist -- the LLM never sees a raw
-    5-zones-by-N-hours table (see docs/ARCHITECTURE.md's long-log strategy).
+    5-zones-by-N-hours table (see ARCHITECTURE.md's long-log strategy).
 
     peak_kw_so_far: the caller's running max of electricity_kwh_this_hour across
     the run (this function only sees one row, so it can't track a running max
@@ -166,7 +166,7 @@ def get_building_state(row: Optional[dict], peak_kw_so_far: Optional[float] = No
         "current_cooling_setpoint_c": round(float(row["cooling_setpoint_c"]), 1),
         "fan_available": bool(float(row.get("fan_available", 1.0))),
         # Total electricity is mostly lighting/plug load this agent can't touch
-        # (~62% of facility total, see docs/ARCHITECTURE.md) -- hvac_kwh_this_hour
+        # (~62% of facility total, see ARCHITECTURE.md) -- hvac_kwh_this_hour
         # is the number that actually reflects setpoint/fan decisions.
         "electricity_kwh_this_hour": round(float(row["electricity_kwh_this_hour"]), 2),
         "hvac_kwh_this_hour": round(float(hvac_kwh), 2),
@@ -185,7 +185,7 @@ def get_forecast_context(day_of_year: int, hour: int, day_of_week: int, horizon:
     _load_outdoor_temp_forecast) and is None for an hour if that file isn't
     reachable -- callers must handle a missing forecast, not assume one.
     cheapest/dirtiest rank by carbon, cheapest/priciest_tariff by cost --
-    tracked separately since they don't always agree (see docs/ARCHITECTURE.md)."""
+    tracked separately since they don't always agree (see ARCHITECTURE.md)."""
     profile = load_carbon_profile()
     outdoor_forecast = _load_outdoor_temp_forecast()
     hours_ahead = []

@@ -29,7 +29,7 @@ occupants' comfort.
 control. HVAC-only figures isolate what the agent can actually influence, which is
 why both total and HVAC-only numbers are reported.
 
-Dashboard: [`results/dashboard.html`](results/dashboard.html) · Demo video: _link TBD_
+Dashboard: [`results/dashboard.html`](results/dashboard.html) · [Demo video](submission_docs/Eco-Loop-Agents%20Demo%20Video.mp4)
 
 ## How it works
 
@@ -82,7 +82,7 @@ actuated on the very next simulated hour. A file is boring and cannot hang a liv
 run- deliberate, given a hang directly conflicts with the 30%-weighted requirement
 that the closed loop survive an extended horizon without crashing.
 
-Full detail: [`docs/ARCHITECTURE.md` § Tool-calling architecture](docs/ARCHITECTURE.md#tool-calling-architecture).
+Full detail: [`ARCHITECTURE.md` § Tool-calling architecture](ARCHITECTURE.md#tool-calling-architecture).
 
 ## Safety supervisor
 
@@ -112,7 +112,7 @@ across occupied↔unoccupied transitions, where a real step is the point) which 
 against oscillation between LLM decisions or between an LLM decision and a very
 different fallback value.
 
-Full detail: [`docs/ARCHITECTURE.md` § Safety supervisor](docs/ARCHITECTURE.md#safety-supervisor-the-reliability-path).
+Full detail: [`ARCHITECTURE.md` § Safety supervisor](ARCHITECTURE.md#safety-supervisor-the-reliability-path).
 
 ## Prompt engineering
 
@@ -130,7 +130,7 @@ prompt, rather than leaving the model to infer it, is what lets the agent set fu
 setback the moment occupancy ends instead of coasting on near-occupied setpoints
 into an empty building.
 
-Full detail: [`docs/ARCHITECTURE.md` § Prompt strategy](docs/ARCHITECTURE.md#prompt-strategy).
+Full detail: [`ARCHITECTURE.md` § Prompt strategy](ARCHITECTURE.md#prompt-strategy).
 
 ## Handling lengthy simulation logs
 
@@ -146,7 +146,7 @@ budget, never the full log.
 Net effect: **prompt size is constant regardless of simulation horizon.** A 7-day
 run and a 30-day run send the same-sized prompt every hour.
 
-Full detail: [`docs/ARCHITECTURE.md` § Long-log / high-volume-data handling](docs/ARCHITECTURE.md#long-log--high-volume-data-handling).
+Full detail: [`ARCHITECTURE.md` § Long-log / high-volume-data handling](ARCHITECTURE.md#long-log--high-volume-data-handling).
 
 ## Prompt latency management
 
@@ -175,7 +175,7 @@ Error strings fed back to the model via `get_recent_errors` are clipped to a fix
 length since the raw provider error bodies otherwise add ~30% to prompt size the moment
 failures start, which is exactly when the token budget is already the problem.
 
-Full detail: [`docs/ARCHITECTURE.md` § Latency measurement & management](docs/ARCHITECTURE.md#latency-measurement--management).
+Full detail: [`ARCHITECTURE.md` § Latency measurement & management](ARCHITECTURE.md#latency-measurement--management).
 
 ## Quickstart
 
@@ -255,9 +255,9 @@ like-for-like.
 | `models/` | Baseline `.idf` + runtime-modified versions |
 | `data/` | Grid carbon-intensity and tariff profile (weather loads from the EnergyPlus install) |
 | `results/` | Run outputs, `decision_log.jsonl`, dashboard, figures |
-| `docs/` | Problem spec, architecture document |
+| `submission_docs/` | Hackathon Deliverables |
 | `scripts/` | Entry points listed above |
 
 Full technical details of the tool-calling architecture, prompt strategy, latency
 management, metering, and the rejected alternatives live in
-[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+[`ARCHITECTURE.md`](ARCHITECTURE.md).

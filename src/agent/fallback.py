@@ -19,7 +19,7 @@ MIN_DEADBAND_C = 1.0
 # Phase 5 investigated, NOT shipped: optimal-start pre-heat (raising heating
 # during the hours right before occupancy) to close the hour-8 cold-side PMV
 # violation shared identically by baseline/floor/LLM (12/275 zone-hours, see
-# docs/ARCHITECTURE.md). Measured, not assumed: tried 1h lead @ 21C (violation
+# ARCHITECTURE.md). Measured, not assumed: tried 1h lead @ 21C (violation
 # count UNCHANGED at 12), 2h lead @ 21C (still unchanged at 12), and 2h lead @
 # 23C -- UNOCCUPIED_HEATING_RANGE's own ceiling, as aggressive as the locked
 # clamp range allows (11/275, a 1-zone-hour dent) while reheat gas spiked from
